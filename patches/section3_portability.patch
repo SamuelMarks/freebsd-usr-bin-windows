@@ -1,0 +1,743 @@
+--- a/contrib/bsddialog/lib/menubox.c
++++ b/contrib/bsddialog/lib/menubox.c
+@@ -71,7 +71,7 @@
+ };
+ 
+ static enum menumode
+-getmode(enum menumode mode, struct bsddialog_menugroup group)
++bsddialog_getmode(enum menumode mode, struct bsddialog_menugroup group)
+ {
+ 	if (mode == MIXEDLISTMODE) {
+ 		if (group.type == BSDDIALOG_SEPARATOR)
+@@ -117,9 +117,9 @@
+ 			item = &groups[i].items[j];
+ 			pritem = &m->pritems[abs];
+ 
+-			if (getmode(mode, groups[i]) == MENUMODE) {
++			if (bsddialog_getmode(mode, groups[i]) == MENUMODE) {
+ 				m->pritems[abs].on = false;
+-			} else if (getmode(mode, groups[i]) == RADIOLISTMODE) {
++			} else if (bsddialog_getmode(mode, groups[i]) == RADIOLISTMODE) {
+ 				m->pritems[abs].on = onetrue ? false : item->on;
+ 				if (m->pritems[abs].on)
+ 					onetrue = true;
+@@ -128,7 +128,7 @@
+ 			}
+ 			pritem->group = i;
+ 			pritem->index = j;
+-			pritem->type = getmode(mode, groups[i]);
++			pritem->type = bsddialog_getmode(mode, groups[i]);
+ 
+ 			pritem->prefix = CHECK_STR(item->prefix);
+ 			pritem->depth = item->depth;
+--- a/lib/libfetch/ftp.c
++++ b/lib/libfetch/ftp.c
+@@ -133,7 +133,9 @@
+ 	sin4->sin_addr.s_addr = addr;
+ 	sin4->sin_port = port;
+ 	sin4->sin_family = AF_INET;
++#if !defined(_WIN32) && !defined(__DOS__) && !defined(__linux__)
+ 	sin4->sin_len = sizeof(struct sockaddr_in);
++#endif
+ }
+ 
+ /*
+@@ -770,7 +772,7 @@
+ 		if (bindaddr != NULL && *bindaddr != '\0' &&
+ 		    (e = fetch_bind(sd, sa.ss_family, bindaddr)) != 0)
+ 			goto ouch;
+-		if (connect(sd, (struct sockaddr *)&sa, sa.ss_len) == -1)
++		if (connect(sd, (struct sockaddr *)&sa, (socklen_t)(sa.ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_storage))) == -1)
+ 			goto sysouch;
+ 
+ 		/* make the server initiate the transfer */
+@@ -807,7 +809,7 @@
+ 		}
+ 		if (verbose)
+ 			fetch_info("binding data socket");
+-		if (bind(sd, (struct sockaddr *)&sa, sa.ss_len) == -1)
++		if (bind(sd, (struct sockaddr *)&sa, (socklen_t)(sa.ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_storage))) == -1)
+ 			goto sysouch;
+ 		if (listen(sd, 1) == -1)
+ 			goto sysouch;
+@@ -830,7 +832,7 @@
+ 			e = -1;
+ 			sin6 = (struct sockaddr_in6 *)&sa;
+ 			sin6->sin6_scope_id = 0;
+-			if (getnameinfo((struct sockaddr *)&sa, sa.ss_len,
++			if (getnameinfo((struct sockaddr *)&sa, (socklen_t)(sa.ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_storage)),
+ 				hname, sizeof(hname),
+ 				NULL, 0, NI_NUMERICHOST) == 0) {
+ 				e = ftp_cmd(conn, "EPRT |%d|%s|%d|", 2, hname,
+--- a/usr.bin/patch/backupfile.c
++++ b/usr.bin/patch/backupfile.c
+@@ -104,7 +104,7 @@
+ 	file_name_length = strlen(file);
+ 
+ 	while ((dp = readdir(dirp)) != NULL) {
+-		if (dp->d_namlen <= file_name_length)
++		if (strlen(dp->d_name) <= file_name_length)
+ 			continue;
+ 
+ 		this_version = version_number(file, dp->d_name, file_name_length);
+--- a/usr.bin/xinstall/xinstall.c
++++ b/usr.bin/xinstall/xinstall.c
+@@ -90,7 +90,7 @@
+  * non-FreeBSD system. Linux does not have the st_flags and st_birthtime
+  * members in struct stat so we need to omit support for changing those fields.
+  */
+-#ifndef __linux__
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ #define HAVE_STRUCT_STAT_ST_FLAGS 1
+ #else
+ #define HAVE_STRUCT_STAT_ST_FLAGS 0
+--- a/usr.bin/localedef/collate.c
++++ b/usr.bin/localedef/collate.c
+@@ -142,7 +142,7 @@
+ 	RB_ENTRY(weight) entry;
+ } weight_t;
+ 
+-typedef struct priority {
++typedef struct fbsd_coll_priority {
+ 	res_t		res;
+ 	int32_t		pri;
+ 	int		pass;
+--- a/usr.bin/talk/invite.c
++++ b/usr.bin/talk/invite.c
+@@ -72,7 +72,7 @@
+ 	if (listen(sockt, 5) != 0)
+ 		p_error("Error on attempt to listen for caller");
+ 	/* copy new style sockaddr to old, swap family (short in old) */
+-	msg.addr = *(struct tsockaddr *)&my_addr;
++	memcpy(&msg.addr, &my_addr, sizeof(msg.addr));
+ 	msg.addr.sa_family = htons(my_addr.sin_family);
+ 	msg.id_num = htonl(-1);		/* an impossible id_num */
+ 	invitation_waiting = 1;
+--- a/usr.bin/talk/look_up.c
++++ b/usr.bin/talk/look_up.c
+@@ -54,7 +54,7 @@
+ 
+ 	/* the rest of msg was set up in get_names */
+ 	/* copy new style sockaddr to old, swap family (short in old) */
+-	msg.ctl_addr = *(struct tsockaddr *)&ctl_addr;
++	memcpy(&msg.ctl_addr, &ctl_addr, sizeof(msg.ctl_addr));
+ 	msg.ctl_addr.sa_family = htons(ctl_addr.sin_family);
+ 	/* must be initiating a talk */
+ 	if (!look_for_invite(rp))
+--- a/usr.bin/usbhidctl/usbhid.c
++++ b/usr.bin/usbhidctl/usbhid.c
+@@ -53,6 +53,7 @@
+ 
+ static int verbose = 0;
+ static int noname = 0;
++#define hexdump usbhid_hexdump_flag
+ static int hexdump = 0;
+ static int wflag = 0;
+ static int zflag = 0;
+--- a/usr.bin/stat/stat.c
++++ b/usr.bin/stat/stat.c
+@@ -425,7 +425,11 @@
+ 	if (stat(argv[0], &st) == -1)
+ 		err(2, "%s", argv[0]);
+ 
++#ifdef __FreeBSD__
+ 	mounted = (st.st_bsdflags & SFBSD_MNTPOINT) != 0;
++#else
++	mounted = 0;
++#endif
+ 	if (!quiet)
+ 		printf("%s is %sa mount point\n", argv[0],
+ 		    mounted ? "" : "not ");
+--- a/usr.bin/passwd/passwd.c
++++ b/usr.bin/passwd/passwd.c
+@@ -109,6 +109,7 @@
+ 		errx(1, "permission denied");
+ 
+ 	/* check where the user's from */
++#ifdef __FreeBSD__
+ 	switch (pwd->pw_fields & _PWF_SOURCE) {
+ 	case _PWF_FILES:
+ 		fprintf(stderr, "Changing local password for %s\n",
+@@ -123,6 +124,9 @@
+ 		errx(1, 
+ 	  "Sorry, `passwd' can only change passwords for local or NIS users.");
+ 	}
++#else
++	fprintf(stderr, "Changing local password for %s\n", pwd->pw_name);
++#endif
+ 
+ #define pam_check(func) do { \
+ 	if (pam_err != PAM_SUCCESS) { \
+--- a/usr.bin/chpass/chpass.c
++++ b/usr.bin/chpass/chpass.c
+@@ -224,5 +224,6 @@
+ 	}
+ 
++#ifdef __FreeBSD__
+ 	if (old_pw != NULL)
+ 		pw->pw_fields |= (old_pw->pw_fields & _PWF_SOURCE);
+ 	switch (pw->pw_fields & _PWF_SOURCE) {
+@@ -244,6 +245,9 @@
+ #endif /* YP */
+ 	case 0:
+ 	case _PWF_FILES:
++#else
++	switch (0) { case 0:
++#endif
+ 		if (pw_init(NULL, NULL))
+ 			err(1, "pw_init()");
+ 		if ((pfd = pw_lock()) == -1) {
+--- a/contrib/libxo/libxo/xo_syslog.c
++++ b/contrib/libxo/libxo/xo_syslog.c
+@@ -318,7 +318,7 @@
+             return;
+     }
+     if (xo_logfile != -1 && xo_status == NOCONN) {
+-#ifdef HAVE_SUN_LEN
++#if defined(HAVE_SUN_LEN) && (defined(__FreeBSD__) || defined(__APPLE__))
+         saddr.sun_len = sizeof(saddr);
+ #endif /* HAVE_SUN_LEN */
+         saddr.sun_family = AF_UNIX;
+@@ -550,7 +550,7 @@
+     } else
+ 	gettimeofday(&tv, NULL);
+ 
+-    (void) localtime_r(&tv.tv_sec, &tm);
++    { time_t xo_tsec = (time_t)tv.tv_sec; (void) localtime_r(&xo_tsec, &tm); }
+ 
+     if (xo_logstat & LOG_PERROR) {
+ 	/*
+--- a/contrib/elftoolchain/libdwarf/libdwarf_lineno.c
++++ b/contrib/elftoolchain/libdwarf/libdwarf_lineno.c
+@@ -57,13 +57,6 @@
+ 
+ 	/* Make a full pathname if needed. */
+ 	if (*lf->lf_fname != '/') {
+-		filepath = open_memstream(&lf->lf_fullpath, &slen);
+-		if (filepath == NULL) {
+-			free(lf);
+-			DWARF_SET_ERROR(dbg, error, DW_DLE_MEMORY);
+-			return (DW_DLE_MEMORY);
+-		}
+-
+ 		if (lf->lf_dirndx > 0)
+ 			incdir = li->li_incdirs[lf->lf_dirndx - 1];
+ 		else
+@@ -73,14 +66,19 @@
+ 		 * Prepend the compilation directory if the directory table
+ 		 * entry is relative.
+ 		 */
+-		if (incdir == NULL || *incdir != '/')
+-			fprintf(filepath, "%s/", compdir);
+-		if (incdir != NULL)
+-			fprintf(filepath, "%s/", incdir);
+-		fprintf(filepath, "%s", lf->lf_fname);
+-		if (fclose(filepath) != 0) {
++		(void) filepath;
++		slen = (compdir ? strlen(compdir) : 0) +
++		    (incdir ? strlen(incdir) : 0) + strlen(lf->lf_fname) + 4;
++		lf->lf_fullpath = malloc(slen);
++		if (lf->lf_fullpath == NULL) {
+ 			free(lf);
+ 			DWARF_SET_ERROR(dbg, error, DW_DLE_MEMORY);
+ 			return (DW_DLE_MEMORY);
+ 		}
++		snprintf(lf->lf_fullpath, slen, "%s%s%s%s%s",
++		    (incdir == NULL || *incdir != '/') ? (compdir ? compdir : "") : "",
++		    (incdir == NULL || *incdir != '/') ? "/" : "",
++		    incdir != NULL ? incdir : "",
++		    incdir != NULL ? "/" : "",
++		    lf->lf_fname);
+ 	}
+--- a/contrib/file/src/readcdf.c
++++ b/contrib/file/src/readcdf.c
+@@ -241,7 +241,7 @@
+ 				} else {
+ 					char *c, *ec;
+ 					cdf_timestamp_to_timespec(&ts, tp);
+-					c = cdf_ctime(&ts.tv_sec, tbuf);
++					{ time_t tsec = (time_t)ts.tv_sec; c = cdf_ctime(&tsec, tbuf); }
+ 					if (c != NULL &&
+ 					    (ec = strchr(c, '\n')) != NULL)
+ 						*ec = '\0';
+--- a/usr.bin/tee/tee.c
++++ b/usr.bin/tee/tee.c
+@@ -180,9 +180,11 @@
+ 		goto failed;
+ 
+ 	(void)strlcpy(&sun.sun_path[0], path, sizeof(sun.sun_path));
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 	sun.sun_len = SUN_LEN(&sun);
++#endif
+ 
+-	if (connect(fd, (const struct sockaddr *)&sun, sun.sun_len) == 0)
++	if (connect(fd, (const struct sockaddr *)&sun, (socklen_t)sizeof(sun)) == 0)
+ 		return (fd);
+ 
+ failed:
+--- a/usr.bin/write/write.c
++++ b/usr.bin/write/write.c
+@@ -288,10 +288,9 @@
+ 	fd = openat(devfd, tty, O_WRONLY);
+ 	if (fd < 0)
+ 		err(1, "openat(%s%s)", _PATH_DEV, tty);
+-	fclose(stdout);
+-	stdout = fdopen(fd, "w");
+-	if (stdout == NULL)
++	if (dup2(fd, STDOUT_FILENO) < 0)
+ 		err(1, "%s%s", _PATH_DEV, tty);
++	close(fd);
+ 
+ 	(void)signal(SIGINT, done);
+ 	(void)signal(SIGHUP, done);
+--- a/usr.bin/tr/str.c
++++ b/usr.bin/tr/str.c
+@@ -237,7 +237,8 @@
+ {
+ 	int stopval, octal;
+ 	char *savestart;
+-	int n, cnt, *p;
++	int n, cnt;
++	wint_t *p;
+ 	size_t clen;
+ 	wchar_t wc;
+ 
+--- a/usr.bin/lockf/lockf.c
++++ b/usr.bin/lockf/lockf.c
+@@ -58,8 +58,10 @@
+ static void wait_for_lock(const char *name);
+ 
+ static const char *lockname;
++#ifndef _WIN32
+ _Static_assert(sizeof(sig_atomic_t) >= sizeof(pid_t),
+     "PIDs cannot be managed safely from a signal handler on this platform.");
++#endif
+ static sig_atomic_t child = -1;
+ static int lockfd = -1;
+ static bool keep;
+--- a/usr.bin/calendar/calendar.c
++++ b/usr.bin/calendar/calendar.c
+@@ -154,7 +154,11 @@
+ 
+ 			time(&t);
+ 			localtime_r(&t, &tm);
++#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
++			utcoffset = 0;
++#else
+ 			utcoffset = tm.tm_gmtoff;
++#endif
+ 			/* seconds -> hh:mm:ss */
+ 			hh = utcoffset / SECSPERHOUR;
+ 			utcoffset %= SECSPERHOUR;
+--- a/usr.bin/lock/lock.c
++++ b/usr.bin/lock/lock.c
+@@ -140,7 +140,11 @@
+ 	nexttime = timval + (sectimeout * 60);
+ 	timp = localtime(&timval);
+ 	ap = asctime(timp);
++#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
++	tzn = "UTC";
++#else
+ 	tzn = timp->tm_zone;
++#endif
+ 
+ 	(void)signal(SIGINT, quit);
+ 	(void)signal(SIGQUIT, quit);
+--- a/usr.bin/wall/wall.c
++++ b/usr.bin/wall/wall.c
+@@ -218,7 +218,11 @@
+ 		(void)fwprintf(fp, L"%-79.79S\007\007\r\n", lbuf);
+ 		(void)swprintf(lbuf, sizeof(lbuf)/sizeof(wchar_t),
+ 		    L"        (%s) at %d:%02d %s...", tty,
++#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
++		    lt->tm_hour, lt->tm_min, "UTC");
++#else
+ 		    lt->tm_hour, lt->tm_min, lt->tm_zone);
++#endif
+ 		(void)fwprintf(fp, L"%-79.79S\r\n", lbuf);
+ 	}
+ 	(void)fwprintf(fp, L"%79s\r\n", " ");
+--- a/usr.bin/mail/popen.c
++++ b/usr.bin/mail/popen.c
+@@ -156,7 +156,7 @@
+ }
+ 
+ void
+-register_file(FILE *fp, int pipe, pid_t pid)
++register_file(FILE *fp, int pipe, int pid)
+ {
+ 	struct fp *fpp;
+ 
+@@ -278,7 +278,7 @@
+ }
+ 
+ int
+-wait_command(pid_t pid)
++wait_command(int pid)
+ {
+ 
+ 	if (wait_child(pid) < 0) {
+@@ -356,7 +356,7 @@
+  * Wait for a specific child to die.
+  */
+ int
+-wait_child(pid_t pid)
++wait_child(int pid)
+ {
+ 	struct child *cp;
+ 	sigset_t nset, oset;
+@@ -388,7 +388,7 @@
+  * Mark a child as don't care.
+  */
+ void
+-free_child(pid_t pid)
++free_child(int pid)
+ {
+ 	struct child *cp;
+ 	sigset_t nset, oset;
+--- a/usr.bin/getent/getent.c
++++ b/usr.bin/getent/getent.c
+@@ -630,8 +630,11 @@
+ 	if (ut->ut_type == EMPTY)
+ 		return;
+ 	
++	{
++	time_t ut_sec = (time_t)ut->ut_tv.tv_sec;
+ 	printf("[%jd.%06u -- %.24s] ",
+ 	    (intmax_t)ut->ut_tv.tv_sec, (unsigned int)ut->ut_tv.tv_usec,
+-	    ctime(&ut->ut_tv.tv_sec));
++	    ctime(&ut_sec));
++	}
+ 
+ 	switch (ut->ut_type) {
+--- a/usr.bin/chpass/field.c
++++ b/usr.bin/chpass/field.c
+@@ -163,18 +163,24 @@
+ int
+ p_change(char *p, struct passwd *pw, ENTRY *ep __unused)
+ {
+-	if (!atot(p, &pw->pw_change))
++	time_t chg = 0;
++	if (!atot(p, &chg)) {
++		pw->pw_change = chg;
+ 		return (0);
++	}
+ 	warnx("illegal date for change field");
+ 	return (-1);
+ }
+ 
+ /* ARGSUSED */
+ int
+ p_expire(char *p, struct passwd *pw, ENTRY *ep __unused)
+ {
+-	if (!atot(p, &pw->pw_expire))
++	time_t exp = 0;
++	if (!atot(p, &exp)) {
++		pw->pw_expire = exp;
+ 		return (0);
++	}
+ 	warnx("illegal date for expire field");
+ 	return (-1);
+ }
+--- a/usr.bin/talk/ctl.c
++++ b/usr.bin/talk/ctl.c
+@@ -45,9 +45,9 @@
+ #include "talk.h"
+ #include "talk_ctl.h"
+ 
+-struct	sockaddr_in daemon_addr = { .sin_len = sizeof(daemon_addr), .sin_family = AF_INET };
+-struct	sockaddr_in ctl_addr = { .sin_len = sizeof(ctl_addr), .sin_family = AF_INET };
+-struct	sockaddr_in my_addr = { .sin_len = sizeof(my_addr), .sin_family = AF_INET };
++struct	sockaddr_in daemon_addr = { .sin_family = AF_INET };
++struct	sockaddr_in ctl_addr = { .sin_family = AF_INET };
++struct	sockaddr_in my_addr = { .sin_family = AF_INET };
+ 
+ 	/* inet addresses of the two machines */
+ struct	in_addr my_machine_addr;
+@@ -68,7 +68,9 @@
+ 
+ 	(void)memset(&my_addr, 0, sizeof(my_addr));
+ 	my_addr.sin_family = AF_INET;
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 	my_addr.sin_len = sizeof(my_addr);
++#endif
+ 	my_addr.sin_addr = my_machine_addr;
+ 	my_addr.sin_port = 0;
+ 	sockt = socket(AF_INET, SOCK_STREAM, 0);
+@@ -89,7 +91,9 @@
+ 
+ 	(void)memset(&ctl_addr, 0, sizeof(ctl_addr));
+ 	ctl_addr.sin_family = AF_INET;
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 	ctl_addr.sin_len = sizeof(my_addr);
++#endif
+ 	ctl_addr.sin_port = 0;
+ 	ctl_addr.sin_addr = my_machine_addr;
+ 	ctl_sockt = socket(AF_INET, SOCK_DGRAM, 0);
+--- a/usr.bin/talk/get_iface.c
++++ b/usr.bin/talk/get_iface.c
+@@ -55,12 +55,16 @@
+ 	memcpy(&remote.sin_addr, dst, sizeof remote.sin_addr);
+ 	remote.sin_port = htons(60000);
+ 	remote.sin_family = AF_INET;
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 	remote.sin_len = sizeof remote;
++#endif
+ 
+ 	local.sin_addr.s_addr = htonl(INADDR_ANY);
+ 	local.sin_port = htons(60000);
+ 	local.sin_family = AF_INET;
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 	local.sin_len = sizeof local;
++#endif
+ 
+ 	s = socket(PF_INET, SOCK_DGRAM, 0);
+ 	if (s < 0)
+--- a/usr.bin/talk/look_up.c
++++ b/usr.bin/talk/look_up.c
+@@ -69,7 +69,9 @@
+ 			p_error("Response uses invalid network address");
+ 		(void)memcpy(&addr, &rp->addr.sa_family, sizeof(addr));
+ 		addr.sa_family = rp->addr.sa_family;
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 		addr.sa_len = sizeof(addr);
++#endif
+ 		errno = 0;
+ 		if (connect(sockt, &addr, sizeof(addr)) != -1)
+ 			return (1);
+--- a/contrib/tnftp/src/ftp.c
++++ b/contrib/tnftp/src/ftp.c
+@@ -147,12 +147,12 @@
+ 		struct sockaddr_in6 su_sin6;
+ #endif
+ 	} si_su;
+-#if !defined(HAVE_STRUCT_SOCKADDR_IN_SIN_LEN)
++#if !defined(HAVE_STRUCT_SOCKADDR_IN_SIN_LEN) || (!defined(__FreeBSD__) && !defined(__APPLE__))
+ 	int	si_len;
+ #endif
+ };
+ 
+-#if !defined(HAVE_STRUCT_SOCKADDR_IN_SIN_LEN)
++#if !defined(HAVE_STRUCT_SOCKADDR_IN_SIN_LEN) || (!defined(__FreeBSD__) && !defined(__APPLE__))
+ # define su_len		si_len
+ #else
+ # define su_len		si_su.su_sin.sin_len
+@@ -2132,7 +2132,7 @@
+ 	sin.sin_port = sin6->sin6_port;
+ 
+ 	ai->ai_family = AF_INET;
+-#if defined(HAVE_STRUCT_SOCKADDR_IN_SIN_LEN)
++#if defined(HAVE_STRUCT_SOCKADDR_IN_SIN_LEN) && (defined(__FreeBSD__) || defined(__APPLE__))
+ 	sin.sin_len = len;
+ #endif
+ 	memcpy(ai->ai_addr, &sin, len);
+--- a/usr.bin/localedef/scanner.c
++++ b/usr.bin/localedef/scanner.c
+@@ -393,7 +393,7 @@
+ 	widestr = NULL;
+ 	widesz = 0;
+ 	if (ws == NULL) {
+-		if ((ws = wcsdup(L"")) == NULL) {
++		if ((ws = calloc(1, sizeof(wchar_t))) == NULL) {
+ 			yyerror("out of memory");
+ 		}
+ 	}
+--- a/usr.bin/localedef/bootstrap/limits.h
++++ b/usr.bin/localedef/bootstrap/limits.h
+@@ -36,7 +36,7 @@
+ #include_next <limits.h>
+ 
+ #ifndef COLL_WEIGHTS_MAX
+-#error "COLL_WEIGHTS_MAX missing"
++#define COLL_WEIGHTS_MAX 10
+ #endif
+ 
+ #if COLL_WEIGHTS_MAX != 10
+--- a/contrib/telnet/telnet/commands.c
++++ b/contrib/telnet/telnet/commands.c
+@@ -2333,7 +2333,7 @@
+         int gni_err = 1;
+ 
+ 	if (doaddrlookup)
+-	    gni_err = getnameinfo(res->ai_addr, res->ai_addr->sa_len,
++	    gni_err = getnameinfo(res->ai_addr, res->ai_addrlen,
+ 				  _hostname, sizeof(_hostname) - 1, NULL, 0,
+ 				  NI_NAMEREQD);
+ 	if (gni_err != 0)
+--- a/libexec/tftpd/tftp-io.c
++++ b/libexec/tftpd/tftp-io.c
+@@ -102,7 +102,7 @@
+ 		DROPPACKET(0);
+ 
+ 		if (sendto(peer, pkt, size, 0, (struct sockaddr *)&peer_sock,
+-		    peer_sock.ss_len) == size) {
++		    (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in)) == size) {
+ 			if (i)
+ 				tftp_log(LOG_ERR,
+ 				    "%s block %d, attempt %d successful",
+@@ -158,7 +158,7 @@
+ 		tftp_log(LOG_DEBUG, "Sending ERROR %d: %s", error, tp->th_msg);
+ 
+ 	if (sendto(peer, buf, length, 0,
+-		(struct sockaddr *)&peer_sock, peer_sock.ss_len) != length)
++		(struct sockaddr *)&peer_sock, (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in)) != length)
+ 		tftp_log(LOG_ERR, "send_error: %s", strerror(errno));
+ }
+ 
+@@ -202,7 +202,7 @@
+ 		size += make_options(peer, bp, sizeof(buf) - size);
+ 
+ 	n = sendto(peer, buf, size, 0,
+-	    (struct sockaddr *)&peer_sock, peer_sock.ss_len);
++	    (struct sockaddr *)&peer_sock, (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in));
+ 	if (n != size) {
+ 		tftp_log(LOG_ERR, "%s: %m", __func__);
+ 		return (1);
+@@ -255,7 +255,7 @@
+ 	}
+ 
+ 	n = sendto(peer, buf, size, 0,
+-	    (struct sockaddr *)&peer_sock, peer_sock.ss_len);
++	    (struct sockaddr *)&peer_sock, (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in));
+ 	if (n != size) {
+ 		tftp_log(LOG_ERR, "%s: %m", __func__);
+ 		return (1);
+@@ -305,7 +305,7 @@
+ 	size = bp - buf;
+ 
+ 	if (sendto(peer, buf, size, 0,
+-		(struct sockaddr *)&peer_sock, peer_sock.ss_len) != size) {
++		(struct sockaddr *)&peer_sock, (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in)) != size) {
+ 		tftp_log(LOG_INFO, "send_oack: %s", strerror(errno));
+ 		return (1);
+ 	}
+@@ -334,7 +334,7 @@
+ 	size = 4;
+ 
+ 	if (sendto(fp, buf, size, 0,
+-	    (struct sockaddr *)&peer_sock, peer_sock.ss_len) != size) {
++	    (struct sockaddr *)&peer_sock, (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in)) != size) {
+ 		tftp_log(LOG_INFO, "send_ack: %s", strerror(errno));
+ 		return (1);
+ 	}
+--- a/libexec/tftpd/tftp-utils.c
++++ b/libexec/tftpd/tftp-utils.c
+@@ -100,5 +100,7 @@
+ 	sin4->sin_addr.s_addr = addr;
+ 	sin4->sin_port = port;
+ 	sin4->sin_family = AF_INET;
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 	sin4->sin_len = sizeof(struct sockaddr_in);
++#endif
+ }
+--- a/usr.sbin/ypserv/common/yplib_host.c
++++ b/usr.sbin/ypserv/common/yplib_host.c
+@@ -71,7 +71,9 @@
+ 	int rsrv_sock;
+ 
+ 	memset(&rsrv_sin, 0, sizeof rsrv_sin);
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 	rsrv_sin.sin_len = sizeof rsrv_sin;
++#endif
+ 	rsrv_sin.sin_family = AF_INET;
+ 	rsrv_sock = RPC_ANYSOCK;
+ 	if (port != 0)
+@@ -118,7 +120,9 @@
+ 	int rsrv_sock;
+ 
+ 	memset(&rsrv_sin, 0, sizeof rsrv_sin);
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 	rsrv_sin.sin_len = sizeof rsrv_sin;
++#endif
+ 	rsrv_sin.sin_family = AF_INET;
+ 	rsrv_sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+ 	rsrv_sock = RPC_ANYSOCK;
+--- a/usr.bin/rpcinfo/rpcinfo.c
++++ b/usr.bin/rpcinfo/rpcinfo.c
+@@ -596,7 +596,7 @@
+ 	const char *hostname;
+ 	struct sockaddr *sa = (struct sockaddr *)who->buf;
+ 
+-	if (getnameinfo(sa, sa->sa_len, hostbuf, NI_MAXHOST, NULL, 0, 0)) {
++	if (getnameinfo(sa, (socklen_t)who->len, hostbuf, NI_MAXHOST, NULL, 0, 0)) {
+ 		hostname = unknown;
+ 	} else {
+ 		hostname = hostbuf;
+@@ -623,7 +623,7 @@
+ 	vers = getvers(argv[1]);
+ 	rpc_stat = rpc_broadcast(prognum, vers, NULLPROC,
+ 		(xdrproc_t) xdr_void, (char *)NULL, (xdrproc_t) xdr_void,
+-		(char *)NULL, reply_proc, NULL);
++		(char *)NULL, (resultproc_t)reply_proc, NULL);
+ 	if ((rpc_stat != RPC_SUCCESS) && (rpc_stat != RPC_TIMEDOUT))
+ 		errx(1, "broadcast failed: %s", clnt_sperrno(rpc_stat));
+ 	exit(0);
+--- a/usr.bin/locale/locale.c
++++ b/usr.bin/locale/locale.c
+@@ -711,6 +711,7 @@
+ 		case KW_N_SIGN_POSN:
+ 			rval = &(lc->n_sign_posn);
+ 			break;
++#if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)
+ 		case KW_INT_P_CS_PRECEDES:
+ 			rval = &(lc->int_p_cs_precedes);
+ 			break;
+@@ -729,6 +730,7 @@
+ 		case KW_INT_N_SIGN_POSN:
+ 			rval = &(lc->int_n_sign_posn);
+ 			break;
++#endif
+ 		default:
+ 			break;
+ 	}
+--- a/usr.bin/logger/logger.c
++++ b/usr.bin/logger/logger.c
+@@ -337,7 +337,7 @@
+ 			
+ 		if (ss_src[res->ai_family]) {
+ 			error = bind(s, sstosa(ss_src[res->ai_family]),
+-				    ss_src[res->ai_family]->ss_len);
++				    res->ai_addrlen);
+ 			if (error < 0)
+ 				err(1, "bind");
+ 		}
+--- a/usr.bin/tftp/main.c
++++ b/usr.bin/tftp/main.c
+@@ -305,8 +305,10 @@
+ 
+ 		memset(&peer_sock, 0, sizeof(peer_sock));
+ 		peer_sock.ss_family = res->ai_family;
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 		peer_sock.ss_len = res->ai_addrlen;
+-		if (bind(peer, (struct sockaddr *)&peer_sock, peer_sock.ss_len) < 0) {
++#endif
++		if (bind(peer, (struct sockaddr *)&peer_sock, res->ai_addrlen) < 0) {
+ 			cause = "bind";
+ 			close(peer);
+ 			peer = -1;
+--- a/usr.bin/w/w.c
++++ b/usr.bin/w/w.c
+@@ -263,18 +263,22 @@
+ 		isaddr = 0;
+ 		memset(&ss, '\0', sizeof(ss));
+ 		if (inet_pton(AF_INET6, p, &lsin6->sin6_addr) == 1) {
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 			lsin6->sin6_len = sizeof(*lsin6);
++#endif
+ 			lsin6->sin6_family = AF_INET6;
+ 			isaddr = 1;
+ 		} else if (inet_pton(AF_INET, p, &lsin->sin_addr) == 1) {
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ 			lsin->sin_len = sizeof(*lsin);
++#endif
+ 			lsin->sin_family = AF_INET;
+ 			isaddr = 1;
+ 		}
+ 		if (nflag == 0) {
+ 			/* Attempt to change an IP address into a name */
+ 			if (isaddr && realhostname_sa(fn, sizeof(fn), sa,
+-			    sa->sa_len) == HOSTNAME_FOUND)
++			    (sa->sa_family == AF_INET6) ? (int)sizeof(*lsin6) : (int)sizeof(*lsin)) == HOSTNAME_FOUND)
+ 				p = fn;
+ 		} else if (!isaddr && nflag > 1) {
+ 			/*

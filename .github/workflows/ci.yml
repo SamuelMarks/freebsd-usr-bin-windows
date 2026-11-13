@@ -1,0 +1,351 @@
+# =============================================================================
+# .github/workflows/ci.yml - CI/CD & Release Pipeline for FreeBSD usr.bin
+#
+# 1. qa: Ruff, Interrogate (100% doc), Mypy (--strict), Pytest (100% branch
+#    coverage), Pre-Commit, and upstream freebsd-src cleanliness verification.
+# 2. build-windows: Matrix build across X64, X86, and ARM64 with MSVC + Ninja,
+#    Section 3 SHARED DLLs, standalone per-binary CMakeLists.txt verification,
+#    CTest suite (X64 & X86), and CPack (ZIP, NSIS, WiX).
+# 3. build-linux-wine: Unix CMake + Section 3 SHARED libs + CTest verification.
+# 4. build-dos: OpenWatcom v2 32-bit Protected-Mode DOS build (Section 3 STATIC
+#    .lib + per-binary .exe + freebsd-usr-bin.exe) and CPack ZIP packaging.
+# 5. release: On v* tags, runs scripts.package_release_assets to assemble suite
+#    bundles, Section 3 SDK, <prog>-<ver>-windows.zip, <prog>-<ver>-dos32.zip,
+#    and SHA256SUMS.txt (< 950 assets), publishing to GitHub Releases.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout freebsd-usr-bin-windows
+        uses: actions/checkout@v7
+
+      - name: Checkout auto-win-msvc
+        uses: actions/checkout@v7
+        with:
+          repository: SamuelMarks/auto-win-msvc
+          path: auto-win-msvc
+
+      - name: Sparse Checkout freebsd-src
+        uses: actions/checkout@v7
+        with:
+          repository: freebsd/freebsd-src
+          ref: releng/15.0
+          path: freebsd-src
+          fetch-depth: 1
+          sparse-checkout: |
+            COPYRIGHT
+            usr.bin
+            lib
+            contrib
+            sys
+            include
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install Python QA & Coverage Tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-cov mypy ruff interrogate pre-commit
+
+      - name: Run Lint, 100% Doc/Branch Coverage, Strict Typing & Pre-Commit
+        run: |
+          ruff check scripts tests
+          ruff format --check scripts tests
+          interrogate --fail-under=100 -vv scripts tests
+          mypy --strict scripts tests
+          pytest --cov=scripts --cov=tests --cov-branch --cov-fail-under=100
+          pre-commit run --all-files
+          test -z "$(git -C freebsd-src status --porcelain)"
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: X64
+            msvc_arch: amd64
+            run_tests: true
+            build_nsis: true
+          - arch: X86
+            msvc_arch: amd64_x86
+            run_tests: true
+            build_nsis: true
+          - arch: ARM64
+            msvc_arch: amd64_arm64
+            run_tests: false
+            build_nsis: false
+    steps:
+      - name: Checkout freebsd-usr-bin-windows
+        uses: actions/checkout@v7
+
+      - name: Checkout auto-win-msvc
+        uses: actions/checkout@v7
+        with:
+          repository: SamuelMarks/auto-win-msvc
+          path: auto-win-msvc
+
+      - name: Sparse Checkout freebsd-src
+        uses: actions/checkout@v7
+        with:
+          repository: freebsd/freebsd-src
+          ref: releng/15.0
+          path: freebsd-src
+          fetch-depth: 1
+          sparse-checkout: |
+            COPYRIGHT
+            usr.bin
+            lib
+            contrib
+            sys
+            include
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Setup MSVC (${{ matrix.arch }})
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Configure & Build Full Suite + Section 3 DLLs (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          cmake -G Ninja -B build -S . -DCMAKE_BUILD_TYPE=Release -DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC="%CD%/auto-win-msvc" -DFREEBSD_SRC_DIR="%CD%/freebsd-src"
+          cmake --build build --parallel
+
+      - name: Verify Standalone Per-Binary CMakeLists.txt (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          cmake -G Ninja -S build/freebsd_generated/per_binary/printf -B build_standalone_printf -DCMAKE_BUILD_TYPE=Release -DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC="%CD%/auto-win-msvc" -DFREEBSD_SRC_DIR="%CD%/freebsd-src"
+          cmake --build build_standalone_printf --parallel
+          cmake -G Ninja -S build/freebsd_generated/per_binary/bzip2 -B build_standalone_bzip2 -DCMAKE_BUILD_TYPE=Release -DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC="%CD%/auto-win-msvc" -DFREEBSD_SRC_DIR="%CD%/freebsd-src"
+          cmake --build build_standalone_bzip2 --parallel
+
+      - name: Run CTest Functional Suite (${{ matrix.arch }})
+        if: matrix.run_tests
+        shell: cmd
+        run: |
+          ctest --test-dir build --output-on-failure
+          build\bin\freebsd-usr-bin.exe --version
+          build\bin\printf.exe "win-%s" "${{ matrix.arch }}"
+
+      - name: Verify Upstream freebsd-src Unmodified
+        shell: pwsh
+        run: |
+          $dirty = git -C freebsd-src status --porcelain
+          if ($dirty) { throw "freebsd-src was modified: $dirty" }
+
+      - name: Package Suite Installers with CPack (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF -like "refs/tags/*") {
+            $env:GITHUB_REF_NAME -replace '^v', ''
+          } else {
+            "15.0.0"
+          }
+          $pkgVersion = if ($version -match '^\d+\.\d+\.\d+(\.\d+)?$') { $version } else { "15.0.0" }
+          $arch = "${{ matrix.arch }}"
+          $fileName = "freebsd-usr-bin-$version-$arch"
+          $setupFileName = "freebsd-usr-bin-$version-$arch-setup"
+          Push-Location build
+          cpack -C Release -G ZIP -D "CPACK_PACKAGE_VERSION=$pkgVersion" -D "CPACK_PACKAGE_FILE_NAME=$fileName"
+          if ("${{ matrix.build_nsis }}" -eq "true") {
+            cpack -C Release -G NSIS -D "CPACK_PACKAGE_VERSION=$pkgVersion" -D "CPACK_PACKAGE_FILE_NAME=$setupFileName"
+          }
+          cpack -C Release -G WIX -D "CPACK_PACKAGE_VERSION=$pkgVersion" -D "CPACK_PACKAGE_FILE_NAME=$fileName"
+          Copy-Item "bin\freebsd-usr-bin.exe" -Destination "$fileName.exe" -Force
+          Pop-Location
+
+      - name: Upload Windows ${{ matrix.arch }} Build Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ matrix.arch }}
+          path: |
+            build/bin/*
+            build/lib/*
+            build/freebsd_generated/section3/include/**
+            build/freebsd_generated/per_binary/**
+            build/freebsd-usr-bin-*-${{ matrix.arch }}*
+
+  build-linux-wine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout freebsd-usr-bin-windows
+        uses: actions/checkout@v7
+
+      - name: Checkout auto-win-msvc
+        uses: actions/checkout@v7
+        with:
+          repository: SamuelMarks/auto-win-msvc
+          path: auto-win-msvc
+
+      - name: Sparse Checkout freebsd-src
+        uses: actions/checkout@v7
+        with:
+          repository: freebsd/freebsd-src
+          ref: releng/15.0
+          path: freebsd-src
+          fetch-depth: 1
+          sparse-checkout: |
+            COPYRIGHT
+            usr.bin
+            lib
+            contrib
+            sys
+            include
+
+      - name: Configure, Build & CTest Suite on Linux
+        run: |
+          cmake -B build_unix -S . -DCMAKE_BUILD_TYPE=Release -DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC="$PWD/auto-win-msvc" -DFREEBSD_SRC_DIR="$PWD/freebsd-src"
+          cmake --build build_unix --parallel
+          ctest --test-dir build_unix --output-on-failure
+          test -z "$(git -C freebsd-src status --porcelain)"
+
+  build-dos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout freebsd-usr-bin-windows
+        uses: actions/checkout@v7
+
+      - name: Checkout auto-win-msvc
+        uses: actions/checkout@v7
+        with:
+          repository: SamuelMarks/auto-win-msvc
+          path: auto-win-msvc
+
+      - name: Sparse Checkout freebsd-src
+        uses: actions/checkout@v7
+        with:
+          repository: freebsd/freebsd-src
+          ref: releng/15.0
+          path: freebsd-src
+          fetch-depth: 1
+          sparse-checkout: |
+            COPYRIGHT
+            usr.bin
+            lib
+            contrib
+            sys
+            include
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install OpenWatcom v2 Toolchain
+        run: |
+          sudo mkdir -p /opt/watcom
+          sudo chown -R "$USER:$USER" /opt/watcom
+          curl -fL --retry 3 -o /tmp/ow-snapshot.tar.xz https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.xz
+          tar -xJf /tmp/ow-snapshot.tar.xz -C /opt/watcom
+          rm -f /tmp/ow-snapshot.tar.xz
+
+      - name: Configure, Build & Package 32-bit DOS Suite with OpenWatcom v2
+        run: |
+          export WATCOM="/opt/watcom"
+          if [ -d "$WATCOM/binl64" ]; then
+            WATCOM_BIN="$WATCOM/binl64"
+          else
+            WATCOM_BIN="$WATCOM/binl"
+          fi
+          export PATH="$WATCOM_BIN:$WATCOM/binw:$PATH"
+          export INCLUDE="$WATCOM/h"
+          export EDPATH="$WATCOM/eddat"
+          export WIPFC="$WATCOM/wipfc"
+
+          VER="${GITHUB_REF_NAME#v}"
+          case "$VER" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) VER="15.0.0" ;;
+          esac
+
+          cmake -G "Watcom WMake" -B build_dos -S . -DCMAKE_SYSTEM_NAME=DOS -DCMAKE_SYSTEM_PROCESSOR=I386 -DCMAKE_C_COMPILER="$WATCOM_BIN/wcl386" -DCMAKE_C_FLAGS_INIT="-bt=dos -mf -3r -zq" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC="$PWD/auto-win-msvc" -DFREEBSD_SRC_DIR="$PWD/freebsd-src"
+
+          cmake --build build_dos --config Release
+
+          if [ -f "$WATCOM/binw/dos32a.exe" ]; then
+            cp "$WATCOM/binw/dos32a.exe" build_dos/DOS32A.EXE
+          fi
+          (
+            cd build_dos
+            cpack -C Release -G ZIP -D "CPACK_PACKAGE_VERSION=$VER" -D "CPACK_PACKAGE_FILE_NAME=freebsd-usr-bin-$VER-dos32"
+            if [ -f bin/freebsd-usr-bin.exe ]; then
+              cp bin/freebsd-usr-bin.exe "freebsd-usr-bin-$VER-dos32.exe"
+            elif [ -f freebsd-usr-bin.exe ]; then
+              cp freebsd-usr-bin.exe "freebsd-usr-bin-$VER-dos32.exe"
+            fi
+          )
+          test -z "$(git -C freebsd-src status --porcelain)"
+
+      - name: Upload 32-bit DOS Build Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dos32
+          path: |
+            build_dos/bin/*
+            build_dos/lib/*
+            build_dos/DOS32A.EXE
+            build_dos/freebsd-usr-bin-*-dos32*
+
+  release:
+    runs-on: ubuntu-latest
+    needs:
+      - qa
+      - build-windows
+      - build-linux-wine
+      - build-dos
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout freebsd-usr-bin-windows
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Download All Build Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Assemble Suite, Section 3 SDK, Per-Binary & Checksum Release Assets
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          python -m scripts.package_release_assets --version "$VER" --repo-root "$PWD" --output-dir "$PWD/release_assets" --win-x64 "$PWD/artifacts/windows-X64/build" --win-x86 "$PWD/artifacts/windows-X86/build" --win-arm64 "$PWD/artifacts/windows-ARM64/build" --dos-dir "$PWD/artifacts/dos32/build_dos" --per-binary-cmake-dir "$PWD/artifacts/windows-X64/build/freebsd_generated/per_binary"
+
+      - name: Publish Assets to GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          files: release_assets/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
