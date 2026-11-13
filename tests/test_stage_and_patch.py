@@ -15,6 +15,7 @@ from scripts.stage_and_patch import (
     LF,
     TAB,
     apply_unified_patch,
+    detect_freebsd_major,
     parse_unified_diff,
     stage_patched_sources,
     verify_upstream_clean,
@@ -166,6 +167,24 @@ def test_parse_and_apply_unified_diff_error_branches() -> None:
     with pytest.raises(FreeBsdPortError, match="<EOF>"):
         apply_unified_patch(f"line1{LF}", mismatch_patch)
 
+    shifted_patch = parse_unified_diff(
+        LF.join(
+            [
+                "--- a/shifted.c",
+                "+++ b/shifted.c",
+                "@@ -2,2 +2,2 @@",
+                " anchor_ctx",
+                "-old_val",
+                "+new_val",
+            ]
+        )
+    )[0]
+    shifted_input = f"pre1{LF}pre2{LF}pre3{LF}anchor_ctx{LF}old_val{LF}tail{LF}"
+    assert (
+        apply_unified_patch(shifted_input, shifted_patch)
+        == f"pre1{LF}pre2{LF}pre3{LF}anchor_ctx{LF}new_val{LF}tail{LF}"
+    )
+
 
 def test_stage_patched_sources_and_verify_upstream_clean(
     tmp_path: Path,
@@ -232,6 +251,52 @@ def test_stage_patched_sources_and_verify_upstream_clean(
     staged_c = staged_map[orig_c.resolve()]
     assert staged_c.read_text(encoding="utf-8") == f"int x = 10;{LF}int y = 20;{LF}"
     assert orig_c.read_text(encoding="utf-8") == f"int x = 1;{LF}int y = 2;{LF}"
+
+    assert detect_freebsd_major(src_root) is None
+    param_dir = src_root / "sys" / "sys"
+    param_dir.mkdir(parents=True)
+    param_h = param_dir / "param.h"
+    param_h.write_text(f"/* no version macro */{LF}", encoding="utf-8")
+    assert detect_freebsd_major(src_root) is None
+    param_h.write_text(f"#define __FreeBSD_version 1500068{LF}", encoding="utf-8")
+    assert detect_freebsd_major(src_root) == 15
+
+    f15_dir = patches_dir / "freebsd15"
+    f15_dir.mkdir()
+    (f15_dir / "10_f15.patch").write_text(
+        LF.join(
+            [
+                "--- a/usr.bin/printf/printf.c",
+                "+++ b/usr.bin/printf/printf.c",
+                "@@ -1,2 +1,2 @@",
+                " int x = 10;",
+                "-int y = 20;",
+                "+int y = 150;",
+            ]
+        )
+        + LF,
+        encoding="utf-8",
+    )
+    f16_dir = patches_dir / "freebsd16"
+    f16_dir.mkdir()
+    (f16_dir / "10_f16.patch").write_text(
+        LF.join(
+            [
+                "--- a/usr.bin/nope16/nope.c",
+                "+++ b/usr.bin/nope16/nope.c",
+                "@@ -1 +1 @@",
+                "-a",
+                "+b",
+            ]
+        )
+        + LF,
+        encoding="utf-8",
+    )
+    staged_v15 = stage_patched_sources(src_root, patches_dir, tmp_path / "staged_v15")
+    assert (
+        staged_v15[orig_c.resolve()].read_text(encoding="utf-8")
+        == f"int x = 10;{LF}int y = 150;{LF}"
+    )
 
     (patches_dir / "03_missing.patch").write_text(
         LF.join(

@@ -183,6 +183,24 @@ def test_emit_all_codegen_helpers_full_and_minimal(tmp_path: Path) -> None:
     sys_dir.mkdir(parents=True)
     (sys_dir / "elf_common.h").write_text(f"#define ELF_COMMON 1{LF}", encoding="utf-8")
     (sys_dir / "md4.h").write_text(f"#define MD4_H 1{LF}", encoding="utf-8")
+    (sys_dir / "socket.h").write_text(
+        f"#define AF_NETGRAPH 32{LF}#define AF_MAX 42{LF}",
+        encoding="utf-8",
+    )
+
+    dpv_lib_dir = full_src / "lib" / "libdpv"
+    dpv_lib_dir.mkdir(parents=True)
+    (dpv_lib_dir / "dpv.h").write_text(
+        LF.join(
+            [
+                "extern long long dpv_overall_read;",
+                "extern int dpv_interrupt;",
+                "extern int dpv_abort;",
+            ]
+        )
+        + LF,
+        encoding="utf-8",
+    )
 
     md_dir = full_src / "lib" / "libmd"
     md_dir.mkdir(parents=True)
@@ -244,6 +262,11 @@ def test_emit_all_codegen_helpers_full_and_minimal(tmp_path: Path) -> None:
     assert "codegen/kernel_stat/vmstat.c" in full_emitted
     assert "codegen/kernel_stat/netstat.c" in full_emitted
     assert "codegen/kernel_stat/truss.c" in full_emitted
+    assert "codegen/libdialog/dialog.h" in full_emitted
+    assert "codegen/libdpv/dpv.h" in full_emitted
+    assert "_FBSD_DPV_DATA long long dpv_overall_read;" in full_emitted[
+        "codegen/libdpv/dpv.h"
+    ].read_text(encoding="utf-8")
 
 
 def test_find_m4_binary_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

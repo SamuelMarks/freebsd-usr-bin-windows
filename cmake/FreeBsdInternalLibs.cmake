@@ -111,6 +111,13 @@ if(DEFINED FREEBSD_REQUIRED_SECTION3_LIBS AND NOT "${FREEBSD_REQUIRED_SECTION3_L
     if("fbsd_libbsddialog" IN_LIST FREEBSD_REQUIRED_SECTION3_LIBS)
         list(APPEND FREEBSD_REQUIRED_SECTION3_LIBS fbsd_libcurses fbsd_libtinfow)
     endif()
+    if("fbsd_libdpv" IN_LIST FREEBSD_REQUIRED_SECTION3_LIBS)
+        list(APPEND FREEBSD_REQUIRED_SECTION3_LIBS
+            fbsd_libdialog fbsd_libfigpar fbsd_libutil fbsd_libcurses fbsd_libtinfow)
+    endif()
+    if("fbsd_libdialog" IN_LIST FREEBSD_REQUIRED_SECTION3_LIBS)
+        list(APPEND FREEBSD_REQUIRED_SECTION3_LIBS fbsd_libcurses fbsd_libtinfow)
+    endif()
     if("fbsd_libcurses" IN_LIST FREEBSD_REQUIRED_SECTION3_LIBS)
         list(APPEND FREEBSD_REQUIRED_SECTION3_LIBS fbsd_libtinfow)
     endif()
@@ -254,6 +261,8 @@ EXPORTS
                 "SHELL:-include ${_S3_PREINC}"
                 "-Wno-unused-parameter"
                 "-Wno-sign-compare"
+                "$<$<AND:$<COMPILE_LANGUAGE:C>,$<C_COMPILER_ID:Clang,AppleClang>>:-Wno-incompatible-function-pointer-types>"
+                "$<$<AND:$<COMPILE_LANGUAGE:C>,$<C_COMPILER_ID:GNU>>:-Wno-incompatible-pointer-types>"
             )
         endif()
     endif()
@@ -456,9 +465,16 @@ endif()
 set(_MD_DIR "${FREEBSD_SRC_DIR}/lib/libmd")
 if(EXISTS "${_MD_DIR}/md5.h" AND EXISTS "${_FBSD_CODEGEN_DIR}/libmd/md5hl.c")
     file(GLOB _MD_HL_SRCS "${_FBSD_CODEGEN_DIR}/libmd/*hl.c")
+    if(EXISTS "${FREEBSD_SRC_DIR}/sys/crypto/md4c.c")
+        set(_MD4_C "${FREEBSD_SRC_DIR}/sys/crypto/md4c.c")
+        set(_MD5_C "${FREEBSD_SRC_DIR}/sys/crypto/md5c.c")
+    else()
+        set(_MD4_C "${FREEBSD_SRC_DIR}/sys/kern/md4c.c")
+        set(_MD5_C "${FREEBSD_SRC_DIR}/sys/kern/md5c.c")
+    endif()
     set(_MD_SRCS
-        "${FREEBSD_SRC_DIR}/sys/crypto/md4c.c"
-        "${FREEBSD_SRC_DIR}/sys/crypto/md5c.c"
+        "${_MD4_C}"
+        "${_MD5_C}"
         "${_MD_DIR}/rmd160c.c"
         "${_MD_DIR}/sha0c.c"
         "${_MD_DIR}/sha1c.c"
@@ -473,6 +489,7 @@ if(EXISTS "${_MD_DIR}/md5.h" AND EXISTS "${_FBSD_CODEGEN_DIR}/libmd/md5hl.c")
         SOURCES ${_MD_SRCS}
         INCLUDES "${_FBSD_CODEGEN_DIR}/libmd" "${_MD_DIR}"
                  "${FREEBSD_SRC_DIR}/sys/crypto"
+                 "${FREEBSD_SRC_DIR}/sys/kern"
                  "${FREEBSD_SRC_DIR}/sys/crypto/sha2"
                  "${FREEBSD_SRC_DIR}/sys/crypto/skein"
         DEFINES SKEIN_LOOP=995
@@ -963,8 +980,10 @@ if(EXISTS "${_FILE_DIR}/magic.c" AND EXISTS "${_FBSD_CODEGEN_DIR}/libmagic/magic
         "${_FILE_DIR}/is_csv.c" "${_FILE_DIR}/is_simh.c" "${_FILE_DIR}/is_tar.c"
         "${_FILE_DIR}/magic.c" "${_FILE_DIR}/print.c"
         "${_FILE_DIR}/readelf.c" "${_FILE_DIR}/seccomp.c" "${_FILE_DIR}/softmagic.c"
-        "${_FILE_DIR}/swap.c"
     )
+    if(EXISTS "${_FILE_DIR}/swap.c")
+        list(APPEND _MAGIC_SRCS "${_FILE_DIR}/swap.c")
+    endif()
     _fbsd_resolve_staged_or_upstream(_MAGIC_READCDF_C "contrib/file/src/readcdf.c")
     list(APPEND _MAGIC_SRCS "${_MAGIC_READCDF_C}")
     freebsd_add_section3_library(fbsd_libmagic
@@ -1144,6 +1163,77 @@ else()
         [=[#include "fbsd_bsddialog_s3.h"
 const char *fbsd_libbsddialog_abi_version(void) { return "1.0.4"; }]=]
         LIBS fbsd_libcurses fbsd_libtinfow
+    )
+endif()
+
+if(EXISTS "${_FBSD_CODEGEN_DIR}/libdialog/fbsd_dialog.c" AND EXISTS "${_FBSD_CODEGEN_DIR}/ncurses/curses.h")
+    freebsd_add_section3_library(fbsd_libdialog
+        OUTPUT_NAME "fbsd_dialog"
+        SOURCES "${_FBSD_CODEGEN_DIR}/libdialog/fbsd_dialog.c"
+        INCLUDES "${_FBSD_CODEGEN_DIR}/libdialog" "${_FBSD_CODEGEN_DIR}/ncurses"
+        LIBS fbsd_libcurses fbsd_libtinfow
+        DATA_EXPORTS dialog_state dialog_vars dlg_color_table
+        PUBLIC_HEADERS "${_FBSD_CODEGEN_DIR}/libdialog/dialog.h"
+                       "${_FBSD_CODEGEN_DIR}/libdialog/dlg_colors.h"
+                       "${_FBSD_CODEGEN_DIR}/libdialog/dlg_config.h"
+                       "${_FBSD_CODEGEN_DIR}/libdialog/dlg_keys.h"
+    )
+    if(TARGET fbsd_libdialog AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libdialog PUBLIC FBSD_DIALOG_STATIC=1)
+    endif()
+else()
+    _fbsd_define_portable_s3_unit(fbsd_libdialog "fbsd_dialog" "fbsd_dialog_s3.h"
+        [=[const char *fbsd_libdialog_abi_version(void);]=]
+        [=[#include "fbsd_dialog_s3.h"
+const char *fbsd_libdialog_abi_version(void) { return "1.3"; }]=]
+        LIBS fbsd_libcurses fbsd_libtinfow
+    )
+endif()
+
+set(_FIGPAR_DIR "${FREEBSD_SRC_DIR}/lib/libfigpar")
+if(EXISTS "${_FIGPAR_DIR}/figpar.c")
+    freebsd_add_section3_library(fbsd_libfigpar
+        OUTPUT_NAME "fbsd_figpar"
+        SOURCES "${_FIGPAR_DIR}/figpar.c" "${_FIGPAR_DIR}/string_m.c"
+        INCLUDES "${_FIGPAR_DIR}"
+        DATA_EXPORTS figpar_dummy_config
+        PUBLIC_HEADERS "${_FIGPAR_DIR}/figpar.h" "${_FIGPAR_DIR}/string_m.h"
+    )
+else()
+    _fbsd_define_portable_s3_unit(fbsd_libfigpar "fbsd_figpar" "fbsd_figpar_s3.h"
+        [=[const char *fbsd_libfigpar_abi_version(void);]=]
+        [=[#include "fbsd_figpar_s3.h"
+const char *fbsd_libfigpar_abi_version(void) { return "15.0.0"; }]=]
+    )
+endif()
+
+set(_DPV_DIR "${FREEBSD_SRC_DIR}/lib/libdpv")
+if(EXISTS "${_DPV_DIR}/dpv.c" AND EXISTS "${_FIGPAR_DIR}/figpar.h")
+    set(_DPV_INC_DIRS "${_DPV_DIR}" "${_FIGPAR_DIR}" "${_FBSD_CODEGEN_DIR}/libdialog" "${_FBSD_CODEGEN_DIR}/ncurses")
+    set(_DPV_PUB_HDR "${_DPV_DIR}/dpv.h")
+    if(EXISTS "${_FBSD_CODEGEN_DIR}/libdpv/dpv.h")
+        list(INSERT _DPV_INC_DIRS 0 "${_FBSD_CODEGEN_DIR}/libdpv")
+        set(_DPV_PUB_HDR "${_FBSD_CODEGEN_DIR}/libdpv/dpv.h")
+    endif()
+    freebsd_add_section3_library(fbsd_libdpv
+        OUTPUT_NAME "fbsd_dpv"
+        SOURCES "${_DPV_DIR}/dialog_util.c" "${_DPV_DIR}/dialogrc.c" "${_DPV_DIR}/dprompt.c"
+                "${_DPV_DIR}/dpv.c" "${_DPV_DIR}/status.c" "${_DPV_DIR}/util.c"
+        INCLUDES ${_DPV_INC_DIRS}
+        DEFINES DIALOG="dialog" XDIALOG="Xdialog"
+        LIBS fbsd_libdialog fbsd_libfigpar fbsd_libutil fbsd_libcurses fbsd_libtinfow
+        DATA_EXPORTS dpv_overall_read dpv_interrupt dpv_abort
+        PUBLIC_HEADERS "${_DPV_PUB_HDR}"
+    )
+    if(TARGET fbsd_libdpv AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libdpv PUBLIC FBSD_DPV_STATIC=1)
+    endif()
+else()
+    _fbsd_define_portable_s3_unit(fbsd_libdpv "fbsd_dpv" "fbsd_dpv_s3.h"
+        [=[const char *fbsd_libdpv_abi_version(void);]=]
+        [=[#include "fbsd_dpv_s3.h"
+const char *fbsd_libdpv_abi_version(void) { return "15.0.0"; }]=]
+        LIBS fbsd_libdialog fbsd_libfigpar
     )
 endif()
 

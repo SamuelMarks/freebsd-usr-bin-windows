@@ -2,6 +2,7 @@ freebsd-usr-bin-windows
 =======================
 
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT%20OR%20CC0--1.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![CI](https://github.com/SamuelMarks/freebsd-usr-bin-windows/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelMarks/freebsd-usr-bin-windows/actions/workflows/ci.yml)
 ![Doc Coverage](https://img.shields.io/badge/doc%20coverage-100%25-brightgreen)
 ![Test Coverage](https://img.shields.io/badge/test%20coverage-100%25-brightgreen)
 

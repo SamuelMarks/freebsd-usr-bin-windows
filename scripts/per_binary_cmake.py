@@ -126,7 +126,7 @@ def render_per_binary_cmakelists(
             "        FetchContent_Declare(",
             "            auto_win_msvc",
             "            GIT_REPOSITORY https://github.com/SamuelMarks/auto-win-msvc.git",
-            "            GIT_TAG main",
+            "            GIT_TAG master",
             "            GIT_SHALLOW TRUE",
             "        )",
             "        FetchContent_MakeAvailable(auto_win_msvc)",
@@ -310,7 +310,10 @@ def render_per_binary_cmakelists(
             (
                 "    target_compile_options(${_FBSD_TARGET} PRIVATE "
                 '"-Wno-unused-parameter" "-Wno-sign-compare" '
-                '"$<$<AND:$<COMPILE_LANGUAGE:C>,$<C_COMPILER_ID:Clang,AppleClang,GNU>>:-Wno-incompatible-function-pointer-types>")'
+                '"$<$<AND:$<COMPILE_LANGUAGE:C>,$<C_COMPILER_ID:Clang,AppleClang>>:'
+                '-Wno-incompatible-function-pointer-types>" '
+                '"$<$<AND:$<COMPILE_LANGUAGE:C>,$<C_COMPILER_ID:GNU>>:'
+                '-Wno-incompatible-pointer-types>")'
             ),
             "endif()",
             "",

@@ -50,6 +50,7 @@ MULTI_BINARY_CONTAINERS: tuple[str, ...] = (
 )
 
 SCRIPT_AND_SPECIAL_DIRS: tuple[str, ...] = (
+    "alias",
     "clang",
     "command",
     "dc",
@@ -92,6 +93,8 @@ SYS_KERNEL_LIBS: frozenset[str] = frozenset(
 CURSES_TUI_LIBS: frozenset[str] = frozenset(
     {
         "bsddialog",
+        "dialog",
+        "dpv",
         "edit",
         "ncursesw",
         "tinfow",
@@ -1247,6 +1250,8 @@ def _parse_single_makefile_dir(
             s3_targets = tuple(dict.fromkeys([*s3_targets, "fbsd_libbsdxml", "fbsd_libsbuf"]))
         if prog_name == "chpass":
             c_srcs = tuple(s for s in c_srcs if not s.endswith("/pw_scan.c"))
+        if prog_name == "mandoc":
+            c_srcs = tuple(s for s in c_srcs if not s.endswith("/compat_recallocarray.c"))
         if prog_name == "vacation":
             vac_dir = cg_base / "vacation"
             vac_sm_c = (vac_dir / "fbsd_vacation_sm.c").resolve()
@@ -1286,8 +1291,12 @@ def _parse_single_makefile_dir(
             extra_defs.append("FBSD_COL_BUILD=1")
         if prog_name == "join":
             extra_defs.append("FBSD_JOIN_BUILD=1")
-        if prog_name in ("tr", "fortune", "gprof", "less", "lessecho", "talk"):
+        if prog_name in ("tr", "fortune", "gprof", "less", "lessecho", "lesskey", "talk"):
             extra_defs.append("FBSD_UNDEF_WIN32_DELETE=1")
+        if prog_name == "lesskey" and (generated_dir / "less").is_dir():
+            inc_dirs.insert(0, str((generated_dir / "less").resolve()))
+        if prog_name == "dpv" and (cg_base / "libdpv").is_dir():
+            inc_dirs.insert(0, str((cg_base / "libdpv").resolve()))
         if prog_name == "sed":
             extra_defs.append("FBSD_SED_BUILD=1")
         if prog_name == "bsddialog":

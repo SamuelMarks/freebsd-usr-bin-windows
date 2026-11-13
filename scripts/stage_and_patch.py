@@ -12,6 +12,7 @@ import dataclasses
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
 from scripts.errors import ErrorCode, FreeBsdPortError
@@ -23,6 +24,8 @@ BS: str = chr(92)
 CRLF: str = f"{CR}{LF}"
 
 HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+FREEBSD_VERSION_RE = re.compile(r"^\s*#\s*define\s+__FreeBSD_version\s+(\d+)", re.MULTILINE)
+PATCH_VERSION_DIR_RE = re.compile(r"^freebsd(\d+)$")
 
 GIT_REPO_ENV_VARS: frozenset[str] = frozenset(
     {
@@ -219,11 +222,74 @@ def parse_unified_diff(patch_text: str) -> tuple[FilePatch, ...]:
     return tuple(file_patches)
 
 
+def _hunk_matches_at(work_lines: Sequence[str], start_idx: int, hunk: PatchHunk) -> bool:
+    """Return whether ``hunk``'s context and removed lines match at ``start_idx``.
+
+    Args:
+        work_lines: Current file lines being patched.
+        start_idx: Candidate 0-based line index in ``work_lines``.
+        hunk: ``PatchHunk`` to check at ``start_idx``.
+
+    Returns:
+        ``True`` if every ``' '`` and ``'-'`` line matches verbatim.
+    """
+    cursor = start_idx
+    for raw_hline in hunk.lines:
+        if raw_hline[0] in (" ", "-"):
+            if cursor >= len(work_lines) or work_lines[cursor] != raw_hline[1:]:
+                return False
+            cursor += 1
+    return True
+
+
+def _locate_hunk_start(
+    work_lines: Sequence[str],
+    expected_idx: int,
+    hunk: PatchHunk,
+) -> int | None:
+    """Locate the nearest 0-based line index where ``hunk`` matches verbatim.
+
+    Args:
+        work_lines: Current file lines being patched.
+        expected_idx: Expected 0-based start index adjusted by prior hunk deltas.
+        hunk: ``PatchHunk`` whose context and removed lines must match.
+
+    Returns:
+        Matching 0-based start index, or ``None`` if no exact match exists.
+    """
+    max_idx = len(work_lines)
+    if 0 <= expected_idx <= max_idx and _hunk_matches_at(work_lines, expected_idx, hunk):
+        return expected_idx
+    span = max(abs(expected_idx), abs(max_idx - expected_idx))
+    for offset in range(1, span + 1):
+        for candidate in (expected_idx - offset, expected_idx + offset):
+            if 0 <= candidate <= max_idx and _hunk_matches_at(work_lines, candidate, hunk):
+                return candidate
+    return None
+
+
+def detect_freebsd_major(freebsd_src: Path) -> int | None:
+    """Detect the upstream FreeBSD major version from ``sys/sys/param.h``.
+
+    Args:
+        freebsd_src: Root directory of upstream ``freebsd-src``.
+
+    Returns:
+        Integer major version (e.g. ``15`` or ``16``), or ``None`` if unavailable.
+    """
+    param_h = freebsd_src / "sys" / "sys" / "param.h"
+    if not param_h.is_file():
+        return None
+    match = FREEBSD_VERSION_RE.search(param_h.read_text(encoding="utf-8", errors="surrogateescape"))
+    return int(match.group(1)) // 100000 if match is not None else None
+
+
 def apply_unified_patch(original_text: str, file_patch: FilePatch) -> str:
     """Apply a parsed ``FilePatch`` to ``original_text`` in memory.
 
     Preserves the original file's line-ending convention (CRLF vs. LF) and
-    trailing-newline presence.
+    trailing-newline presence, allowing exact-context line-offset shifts across
+    minor upstream line movements while enforcing zero-fuzz verbatim context.
 
     Args:
         original_text: Unmodified text of the upstream source file.
@@ -241,35 +307,35 @@ def apply_unified_patch(original_text: str, file_patch: FilePatch) -> str:
     delta = 0
 
     for hunk_idx, hunk in enumerate(file_patch.hunks, start=1):
-        start_idx = 0 if hunk.orig_start == 0 else (hunk.orig_start - 1 + delta)
-        if start_idx < 0 or start_idx > len(work_lines):
+        base_idx = 0 if hunk.orig_start == 0 else (hunk.orig_start - 1)
+        expected_idx = 0 if hunk.orig_start == 0 else (base_idx + delta)
+        matched_idx = _locate_hunk_start(work_lines, expected_idx, hunk)
+        if matched_idx is None:
+            if expected_idx < 0 or expected_idx > len(work_lines):
+                raise FreeBsdPortError(
+                    ErrorCode.PATCH_HUNK_MISMATCH,
+                    f"Hunk #{hunk_idx} out of range at line {hunk.orig_start} "
+                    f"for {file_patch.target_rel_path}",
+                )
+            orig_hlines = [ln[1:] for ln in hunk.lines if ln[0] in (" ", "-")]
+            mismatches = [
+                (expected_idx + idx, exp_line)
+                for idx, exp_line in enumerate(orig_hlines)
+                if expected_idx + idx >= len(work_lines)
+                or work_lines[expected_idx + idx] != exp_line
+            ]
+            bad_idx, expected_line = mismatches[0]
+            actual = work_lines[bad_idx] if bad_idx < len(work_lines) else "<EOF>"
             raise FreeBsdPortError(
                 ErrorCode.PATCH_HUNK_MISMATCH,
-                f"Hunk #{hunk_idx} out of range at line {hunk.orig_start} "
-                f"for {file_patch.target_rel_path}",
+                f"Hunk #{hunk_idx} mismatch in {file_patch.target_rel_path} "
+                f"at line {bad_idx + 1}: expected {expected_line!r}, found {actual!r}",
             )
 
-        cursor = start_idx
-        replacement: list[str] = []
-        for raw_hline in hunk.lines:
-            op = raw_hline[0]
-            content = raw_hline[1:]
-            if op in (" ", "-"):
-                if cursor >= len(work_lines) or work_lines[cursor] != content:
-                    actual = work_lines[cursor] if cursor < len(work_lines) else "<EOF>"
-                    raise FreeBsdPortError(
-                        ErrorCode.PATCH_HUNK_MISMATCH,
-                        f"Hunk #{hunk_idx} mismatch in {file_patch.target_rel_path} "
-                        f"at line {cursor + 1}: expected {content!r}, found {actual!r}",
-                    )
-                cursor += 1
-                if op == " ":
-                    replacement.append(content)
-            else:
-                replacement.append(content)
-
-        work_lines[start_idx:cursor] = replacement
-        delta += len(replacement) - (cursor - start_idx)
+        span_len = sum(1 for raw_hline in hunk.lines if raw_hline[0] in (" ", "-"))
+        replacement = [raw_hline[1:] for raw_hline in hunk.lines if raw_hline[0] in (" ", "+")]
+        work_lines[matched_idx : matched_idx + span_len] = replacement
+        delta = (matched_idx - base_idx) + len(replacement) - span_len
 
     joined = newline.join(work_lines)
     if had_trailing_nl and work_lines:
@@ -283,6 +349,10 @@ def stage_patched_sources(
     staged_dir: Path,
 ) -> dict[Path, Path]:
     """Apply all ``patches/**/*.patch`` files onto staged copies under ``staged_dir``.
+
+    Subdirectories named ``freebsd<major>`` (for example ``patches/freebsd15/``
+    and ``patches/freebsd16/``) are applied selectively when ``freebsd_src``'s
+    detected major version matches ``<major>``.
 
     Args:
         freebsd_src: Root directory of upstream ``../freebsd-src``.
@@ -308,8 +378,18 @@ def stage_patched_sources(
     if not patches_dir.is_dir():
         return {}
 
+    major = detect_freebsd_major(src_root)
     staged_map: dict[Path, Path] = {}
     for patch_file in sorted(patches_dir.rglob("*.patch")):
+        rel_dirs = patch_file.relative_to(patches_dir).parts[:-1]
+        ver_tags = [
+            int(ver_match.group(1))
+            for part in rel_dirs
+            if (ver_match := PATCH_VERSION_DIR_RE.match(part)) is not None
+        ]
+        if ver_tags and major not in ver_tags:
+            continue
+
         patch_text = patch_file.read_text(encoding="utf-8")
         file_patches = parse_unified_diff(patch_text)
         for fp in file_patches:

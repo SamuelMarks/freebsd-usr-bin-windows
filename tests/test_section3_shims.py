@@ -9,6 +9,7 @@ from pathlib import Path
 from scripts.section3_shims import (
     emit_curses_section3_sources,
     emit_libarchive_win32_sources,
+    emit_libdialog_section3_sources,
     emit_libedit_section3_sources,
     emit_libmp_section3_sources,
     emit_libsys_section3_sources,
@@ -47,6 +48,10 @@ def test_emit_all_section3_shims_and_compile(tmp_path: Path) -> None:
     assert "bsdtar_windows.h" in la_files
     assert "fbsd_libarchive_win32.c" in la_files
 
+    dlg_files = emit_libdialog_section3_sources(tmp_path / "libdialog")
+    assert "dialog.h" in dlg_files
+    assert "fbsd_dialog.c" in dlg_files
+
     cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     assert cc is not None
 
@@ -57,6 +62,7 @@ def test_emit_all_section3_shims_and_compile(tmp_path: Path) -> None:
             [
                 '#include "curses.h"',
                 '#include "term.h"',
+                '#include "dialog.h"',
                 '#include "histedit.h"',
                 '#include "mp.h"',
                 '#include "security/pam_appl.h"',
@@ -74,7 +80,11 @@ def test_emit_all_section3_shims_and_compile(tmp_path: Path) -> None:
                 "    pam_handle_t *pamh = NULL;",
                 "    char *dom = NULL;",
                 "    assert(w != NULL);",
+                "    assert(getattrs(w) == 0U);",
                 '    mvwaddstr(w, 0, 0, "ok");',
+                "    init_dialog(stdin, stdout);",
+                '    assert(dialog_gauge("T", "P", 7, 40, 50) == 0);',
+                "    end_dialog();",
                 "    endwin();",
                 "    mp_mult(a, b, c);",
                 "    mp_mfree(a); mp_mfree(b); mp_mfree(c);",
@@ -99,11 +109,13 @@ def test_emit_all_section3_shims_and_compile(tmp_path: Path) -> None:
         [
             cc,
             f"-I{tmp_path / 'ncurses'}",
+            f"-I{tmp_path / 'libdialog'}",
             f"-I{tmp_path / 'libedit'}",
             f"-I{tmp_path / 'libmp'}",
             f"-I{tmp_path / 'libsys'}",
             str(driver),
             str(curses_files["fbsd_curses.c"]),
+            str(dlg_files["fbsd_dialog.c"]),
             str(edit_files["fbsd_edit.c"]),
             str(mp_files["fbsd_mp.c"]),
             str(sys_files["fbsd_sys.c"]),

@@ -134,20 +134,6 @@
  static int hexdump = 0;
  static int wflag = 0;
  static int zflag = 0;
---- a/usr.bin/stat/stat.c
-+++ b/usr.bin/stat/stat.c
-@@ -425,7 +425,11 @@
- 	if (stat(argv[0], &st) == -1)
- 		err(2, "%s", argv[0]);
- 
-+#ifdef __FreeBSD__
- 	mounted = (st.st_bsdflags & SFBSD_MNTPOINT) != 0;
-+#else
-+	mounted = 0;
-+#endif
- 	if (!quiet)
- 		printf("%s is %sa mount point\n", argv[0],
- 		    mounted ? "" : "not ");
 --- a/usr.bin/passwd/passwd.c
 +++ b/usr.bin/passwd/passwd.c
 @@ -109,6 +109,7 @@
@@ -566,9 +552,7 @@
  	if (gni_err != 0)
 --- a/libexec/tftpd/tftp-io.c
 +++ b/libexec/tftpd/tftp-io.c
-@@ -102,7 +102,7 @@
- 		DROPPACKET(0);
- 
+@@ -104,5 +104,5 @@
  		if (sendto(peer, pkt, size, 0, (struct sockaddr *)&peer_sock,
 -		    peer_sock.ss_len) == size) {
 +		    (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in)) == size) {
@@ -584,24 +568,20 @@
  		tftp_log(LOG_ERR, "send_error: %s", strerror(errno));
  }
  
-@@ -202,7 +202,7 @@
+@@ -202,5 +202,5 @@
  		size += make_options(peer, bp, sizeof(buf) - size);
  
  	n = sendto(peer, buf, size, 0,
 -	    (struct sockaddr *)&peer_sock, peer_sock.ss_len);
 +	    (struct sockaddr *)&peer_sock, (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in));
  	if (n != size) {
- 		tftp_log(LOG_ERR, "%s: %m", __func__);
- 		return (1);
-@@ -255,7 +255,7 @@
+@@ -255,5 +255,5 @@
  	}
  
  	n = sendto(peer, buf, size, 0,
 -	    (struct sockaddr *)&peer_sock, peer_sock.ss_len);
 +	    (struct sockaddr *)&peer_sock, (peer_sock.ss_family == AF_INET6) ? (socklen_t)sizeof(struct sockaddr_in6) : (socklen_t)sizeof(struct sockaddr_in));
  	if (n != size) {
- 		tftp_log(LOG_ERR, "%s: %m", __func__);
- 		return (1);
 @@ -305,7 +305,7 @@
  	size = bp - buf;
  
@@ -652,26 +632,6 @@
  	rsrv_sin.sin_family = AF_INET;
  	rsrv_sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
  	rsrv_sock = RPC_ANYSOCK;
---- a/usr.bin/rpcinfo/rpcinfo.c
-+++ b/usr.bin/rpcinfo/rpcinfo.c
-@@ -596,7 +596,7 @@
- 	const char *hostname;
- 	struct sockaddr *sa = (struct sockaddr *)who->buf;
- 
--	if (getnameinfo(sa, sa->sa_len, hostbuf, NI_MAXHOST, NULL, 0, 0)) {
-+	if (getnameinfo(sa, (socklen_t)who->len, hostbuf, NI_MAXHOST, NULL, 0, 0)) {
- 		hostname = unknown;
- 	} else {
- 		hostname = hostbuf;
-@@ -623,7 +623,7 @@
- 	vers = getvers(argv[1]);
- 	rpc_stat = rpc_broadcast(prognum, vers, NULLPROC,
- 		(xdrproc_t) xdr_void, (char *)NULL, (xdrproc_t) xdr_void,
--		(char *)NULL, reply_proc, NULL);
-+		(char *)NULL, (resultproc_t)reply_proc, NULL);
- 	if ((rpc_stat != RPC_SUCCESS) && (rpc_stat != RPC_TIMEDOUT))
- 		errx(1, "broadcast failed: %s", clnt_sperrno(rpc_stat));
- 	exit(0);
 --- a/usr.bin/locale/locale.c
 +++ b/usr.bin/locale/locale.c
 @@ -711,6 +711,7 @@

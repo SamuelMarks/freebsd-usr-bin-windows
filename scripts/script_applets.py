@@ -28,6 +28,7 @@ DQ: str = chr(34)
 SQ: str = chr(39)
 
 SCRIPT_APPLET_NAMES: tuple[str, ...] = (
+    "alias",
     "clang",
     "command",
     "dc",
@@ -820,6 +821,7 @@ def generate_script_applet_c(applet_name: str) -> str:
         FreeBsdPortError: If ``applet_name`` is not a recognized script/driver applet.
     """
     generators = {
+        "alias": _gen_command_c,
         "pagesize": _gen_pagesize_c,
         "dc": _gen_dc_c,
         "command": _gen_command_c,

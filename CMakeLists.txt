@@ -98,7 +98,7 @@ endif()
 FetchContent_Declare(
     auto_win_msvc
     GIT_REPOSITORY https://github.com/SamuelMarks/auto-win-msvc.git
-    GIT_TAG main
+    GIT_TAG master
 )
 FetchContent_MakeAvailable(auto_win_msvc)
 
@@ -176,17 +176,17 @@ if(FREEBSD_BUILD_INDIVIDUAL AND EXISTS "${FREEBSD_GEN_DIR}/per_binary_subdirs.cm
         if(FREEBSD_TARGET_DOS OR NOT (FREEBSD_HOST_YACC AND FREEBSD_HOST_LEX))
             set(FREEBSD_ENABLED_BINARIES
                 ${FREEBSD_NATIVE_DIRECT_APPLETS}
-                addr2line backlight biff bintrans bomtool brandelf
+                addr2line alias backlight biff bintrans bomtool brandelf
                 bsdcat bsdcpio bsdiff bsdunzip bspatch btsockstat bzip2 bzip2recover
-                c++filt c89 c99 cap_mkdb chat cksum clear cmp ctlstat ctags
+                c++filt c89 c99 cap_mkdb chat cksum clear cmp ctlstat ctags dpv
                 elfcopy elfctl elfdump env etdump factor file2c finger
                 from fsync gcore genl getconf gh-bc grdc hexdump host
-                infocmp iscsictl kdump leave lessecho locate locate.bigram locate.code logins
+                infocmp iscsictl kdump leave lessecho lesskey locate locate.bigram locate.code logins
                 lsvfs lzmainfo mesg ministat mkstr ncal netstat nfsstat nohup
                 pkgconf pom pr primes protect random readelf resizewin
                 rpcgen sdiotool sdiff size smbutil sockstat soelim stdbuf strfile strings
                 systat tabs tic toe tput tr truss tset tty ul uname units unstr unvis usbhidaction
-                vmstat who xo xopo xstr xzdec yacc ypmatch
+                vfontedpr vmstat who xo xopo xstr xzdec yacc ypmatch
                 clang command dc kyua lorder man mkdep ofed pagesize ssh-copy-id tests xohtml xolint
             )
             list(REMOVE_DUPLICATES FREEBSD_ENABLED_BINARIES)

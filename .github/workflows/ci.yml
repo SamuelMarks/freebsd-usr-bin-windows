@@ -53,12 +53,15 @@ jobs:
           path: freebsd-src
           fetch-depth: 1
           sparse-checkout: |
-            COPYRIGHT
-            usr.bin
-            lib
+            bin
             contrib
-            sys
+            gnu
             include
+            lib
+            libexec
+            sys
+            usr.bin
+            usr.sbin
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -116,12 +119,15 @@ jobs:
           path: freebsd-src
           fetch-depth: 1
           sparse-checkout: |
-            COPYRIGHT
-            usr.bin
-            lib
+            bin
             contrib
-            sys
+            gnu
             include
+            lib
+            libexec
+            sys
+            usr.bin
+            usr.sbin
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -175,10 +181,13 @@ jobs:
           $setupFileName = "freebsd-usr-bin-$version-$arch-setup"
           Push-Location build
           cpack -C Release -G ZIP -D "CPACK_PACKAGE_VERSION=$pkgVersion" -D "CPACK_PACKAGE_FILE_NAME=$fileName"
+          if ($LASTEXITCODE -ne 0) { throw "cpack ZIP failed ($LASTEXITCODE)" }
           if ("${{ matrix.build_nsis }}" -eq "true") {
             cpack -C Release -G NSIS -D "CPACK_PACKAGE_VERSION=$pkgVersion" -D "CPACK_PACKAGE_FILE_NAME=$setupFileName"
+            if ($LASTEXITCODE -ne 0) { throw "cpack NSIS failed ($LASTEXITCODE)" }
           }
           cpack -C Release -G WIX -D "CPACK_PACKAGE_VERSION=$pkgVersion" -D "CPACK_PACKAGE_FILE_NAME=$fileName"
+          if ($LASTEXITCODE -ne 0) { throw "cpack WIX failed ($LASTEXITCODE)" }
           Copy-Item "bin\freebsd-usr-bin.exe" -Destination "$fileName.exe" -Force
           Pop-Location
 
@@ -213,12 +222,15 @@ jobs:
           path: freebsd-src
           fetch-depth: 1
           sparse-checkout: |
-            COPYRIGHT
-            usr.bin
-            lib
+            bin
             contrib
-            sys
+            gnu
             include
+            lib
+            libexec
+            sys
+            usr.bin
+            usr.sbin
 
       - name: Configure, Build & CTest Suite on Linux
         run: |
@@ -247,12 +259,15 @@ jobs:
           path: freebsd-src
           fetch-depth: 1
           sparse-checkout: |
-            COPYRIGHT
-            usr.bin
-            lib
+            bin
             contrib
-            sys
+            gnu
             include
+            lib
+            libexec
+            sys
+            usr.bin
+            usr.sbin
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -341,7 +356,7 @@ jobs:
       - name: Assemble Suite, Section 3 SDK, Per-Binary & Checksum Release Assets
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          python -m scripts.package_release_assets --version "$VER" --repo-root "$PWD" --output-dir "$PWD/release_assets" --win-x64 "$PWD/artifacts/windows-X64/build" --win-x86 "$PWD/artifacts/windows-X86/build" --win-arm64 "$PWD/artifacts/windows-ARM64/build" --dos-dir "$PWD/artifacts/dos32/build_dos" --per-binary-cmake-dir "$PWD/artifacts/windows-X64/build/freebsd_generated/per_binary"
+          python -m scripts.package_release_assets --version "$VER" --repo-root "$PWD" --output-dir "$PWD/release_assets" --win-x64 "$PWD/artifacts/windows-X64" --win-x86 "$PWD/artifacts/windows-X86" --win-arm64 "$PWD/artifacts/windows-ARM64" --dos-dir "$PWD/artifacts/dos32" --per-binary-cmake-dir "$PWD/artifacts/windows-X64/freebsd_generated/per_binary"
 
       - name: Publish Assets to GitHub Releases
         uses: softprops/action-gh-release@v3

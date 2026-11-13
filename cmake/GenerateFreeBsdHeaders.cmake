@@ -328,6 +328,18 @@ function(freebsd_emit_compat_headers)
 
     file(MAKE_DIRECTORY "${ARG_INC_DIR}/libxo")
 
+    set(_fbsd_rlim_nlimits 17)
+    set(_fbsd_rlim_vmm_def "#ifndef RLIMIT_VMM\n#define RLIMIT_VMM 16\n#endif\n")
+    set(_fbsd_rlim_ident_tail "\"pipebuf\", \"vmm\"")
+    if(ARG_FREEBSD_SRC_DIR AND EXISTS "${ARG_FREEBSD_SRC_DIR}/sys/sys/resource.h")
+        file(READ "${ARG_FREEBSD_SRC_DIR}/sys/sys/resource.h" _fbsd_res_h_txt)
+        if(NOT "${_fbsd_res_h_txt}" MATCHES "RLIMIT_VMM")
+            set(_fbsd_rlim_nlimits 16)
+            set(_fbsd_rlim_vmm_def "")
+            set(_fbsd_rlim_ident_tail "\"pipebuf\"")
+        endif()
+    endif()
+
     set(_osreldate_h [=[#ifndef _OSRELDATE_H_
 #define _OSRELDATE_H_
 #undef __FreeBSD_version
@@ -1277,6 +1289,9 @@ int login_tty(int fd);
 #define recv pmq_recv
 #define send pmq_send
 #endif
+#ifndef EVFILT_PROCDESC
+#define EVFILT_PROCDESC (-8)
+#endif
 #ifdef FBSD_FREEBSD_RLIMITS
 #include <sys/resource.h>
 #ifndef RLIMIT_SBSIZE
@@ -1300,14 +1315,8 @@ int login_tty(int fd);
 #ifndef RLIMIT_PIPEBUF
 #define RLIMIT_PIPEBUF 15
 #endif
-#ifndef RLIMIT_VMM
-#define RLIMIT_VMM 16
-#endif
-#undef RLIM_NLIMITS
-#define RLIM_NLIMITS 17
-#ifndef EVFILT_PROCDESC
-#define EVFILT_PROCDESC (-8)
-#endif
+@_fbsd_rlim_vmm_def@#undef RLIM_NLIMITS
+#define RLIM_NLIMITS @_fbsd_rlim_nlimits@
 #ifndef EVFILT_LIO
 #define EVFILT_LIO (-10)
 #endif
@@ -1348,9 +1357,9 @@ int login_tty(int fd);
 #ifndef NOTE_ABSTIME
 #define NOTE_ABSTIME 0x00000010
 #endif
-static const char *const rlimit_ident[17] = {
+static const char *const rlimit_ident[@_fbsd_rlim_nlimits@] = {
     "cpu", "fsize", "data", "stack", "core", "rss", "memlock", "nproc",
-    "nofile", "sbsize", "vmem", "npts", "swap", "kqueues", "umtxp", "pipebuf", "vmm"
+    "nofile", "sbsize", "vmem", "npts", "swap", "kqueues", "umtxp", @_fbsd_rlim_ident_tail@
 };
 #endif
 #ifdef FBSD_MAIL_BUILD
@@ -1573,13 +1582,7 @@ static __inline FILE *fbsd_funopen_compat(
 #endif
 #endif
 
-#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
-#ifndef RLIMIT_MEMLOCK
-#define RLIMIT_MEMLOCK 6
-#endif
-#ifndef RLIMIT_NPROC
-#define RLIMIT_NPROC 8
-#endif
+#if !defined(__FreeBSD__) && !defined(__APPLE__)
 #ifndef EVFILT_READ
 #define EVFILT_READ (-1)
 #define EVFILT_WRITE (-2)
@@ -1612,21 +1615,49 @@ static __inline FILE *fbsd_funopen_compat(
 #define NOTE_RENAME 0x0020
 #define NOTE_REVOKE 0x0040
 #endif
+#ifndef NOTE_LOWAT
+#define NOTE_LOWAT 0x00000001
+#define NOTE_MADVISE 0x0080
+#define NOTE_EXIT 0x80000000U
+#define NOTE_FORK 0x40000000U
+#define NOTE_EXEC 0x20000000U
+#define NOTE_TRACK 0x00000001
+#define NOTE_TRACKERR 0x00000002
+#define NOTE_CHILD 0x00000004
+#define NOTE_FFNOP 0x00000000
+#define NOTE_FFAND 0x40000000U
+#define NOTE_FFOR 0x80000000U
+#define NOTE_FFCOPY 0xc0000000U
+#define NOTE_FFCTRLMASK 0xc0000000U
+#define NOTE_FFLAGSMASK 0x00ffffffU
+#define NOTE_TRIGGER 0x01000000U
+#define NOTE_SECONDS 0x00000001
+#define NOTE_USECONDS 0x00000002
+#define NOTE_NSECONDS 0x00000003
+#endif
+#ifndef EV_SET
+#define EV_SET(kevp, a, b, c, d, e, f) do { \
+    (kevp)->ident = (uintptr_t)(a); \
+    (kevp)->filter = (short)(b); \
+    (kevp)->flags = (unsigned short)(c); \
+    (kevp)->fflags = (unsigned int)(d); \
+    (kevp)->data = (intptr_t)(e); \
+    (kevp)->udata = (void *)(f); \
+} while (0)
+#endif
 #ifndef SIGEMT
 #define SIGEMT 7
 #endif
-#ifndef CRTSCTS
-#define CRTSCTS 0x00030000
+#ifndef S_IFWHT
+#define S_IFWHT 0160000
+#endif
+#ifndef S_ISWHT
+#define S_ISWHT(m) (((m) & S_IFMT) == S_IFWHT)
+#endif
+#ifndef st_birthtime
+#define st_birthtime st_birthtim.tv_sec
 #endif
 static __inline int issetugid(void) { return 0; }
-static __inline char *fbsd_stpcpy_compat(char *dst, const char *src) {
-    size_t n = strlen(src);
-    memcpy(dst, src, n + 1);
-    return dst + n;
-}
-#ifndef stpcpy
-#define stpcpy fbsd_stpcpy_compat
-#endif
 static __inline int fbsd_flsl_compat(long mask) {
     int bit = 0;
     unsigned long u = (unsigned long)mask;
@@ -1644,6 +1675,51 @@ static __inline wint_t nextwctype(wint_t ch, wctype_t wct) {
     }
     return (wint_t)-1;
 }
+static __inline int fbsd_digittoint_compat(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return 0;
+}
+#ifndef digittoint
+#define digittoint fbsd_digittoint_compat
+#endif
+static __inline int iswrune(wint_t wc) {
+    return (wc >= 0 && wc <= 0x10ffff);
+}
+static __inline int setlogin(const char *name) { (void)name; return 0; }
+static __inline int revoke(const char *path) { (void)path; return 0; }
+static const char *const fbsd_sys_signame_compat[32] = {
+    "Signal 0", "hup", "int", "quit", "ill", "trap", "abrt", "emt",
+    "fpe", "kill", "bus", "segv", "sys", "pipe", "alrm", "term",
+    "urg", "stop", "tstp", "cont", "chld", "ttin", "ttou", "io",
+    "xcpu", "xfsz", "vtalrm", "prof", "winch", "info", "usr1", "usr2"
+};
+#ifndef sys_signame
+#define sys_signame fbsd_sys_signame_compat
+#endif
+struct sockaddr;
+int sockaddr_snprintf(char *buf, size_t len, const char *fmt, const struct sockaddr *sa);
+#endif
+
+#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
+#ifndef RLIMIT_MEMLOCK
+#define RLIMIT_MEMLOCK 6
+#endif
+#ifndef RLIMIT_NPROC
+#define RLIMIT_NPROC 8
+#endif
+#ifndef CRTSCTS
+#define CRTSCTS 0x00030000
+#endif
+static __inline char *fbsd_stpcpy_compat(char *dst, const char *src) {
+    size_t n = strlen(src);
+    memcpy(dst, src, n + 1);
+    return dst + n;
+}
+#ifndef stpcpy
+#define stpcpy fbsd_stpcpy_compat
+#endif
 static __inline struct in_addr inet_makeaddr(uint32_t net, uint32_t host) {
     struct in_addr a;
     uint32_t addr = (net < 128U) ? ((net << 24) | (host & 0x00ffffffU))
@@ -1680,15 +1756,6 @@ static __inline char *fbsd_asctime_r_compat(const struct tm *tm, char *buf) {
 }
 #define asctime_r fbsd_asctime_r_compat
 #endif
-static __inline int fbsd_digittoint_compat(int c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return 0;
-}
-#ifndef digittoint
-#define digittoint fbsd_digittoint_compat
-#endif
 static __inline char *fbsd_strsignal_compat(int sig) {
     static char sbuf[32];
     snprintf(sbuf, sizeof(sbuf), "Signal %d", sig);
@@ -1696,9 +1763,6 @@ static __inline char *fbsd_strsignal_compat(int sig) {
 }
 #ifndef strsignal
 #define strsignal fbsd_strsignal_compat
-#endif
-#ifndef st_birthtime
-#define st_birthtime st_birthtim.tv_sec
 #endif
 #ifndef TIOCSETD
 #define TIOCSETD 0x8004741bUL
@@ -1711,26 +1775,6 @@ static __inline char *fbsd_strsignal_compat(int sig) {
 #ifndef EV_FORCEONESHOT
 #define EV_FORCEONESHOT 0x0100
 #define EV_KEEPUDATA 0x0200
-#endif
-#ifndef NOTE_LOWAT
-#define NOTE_LOWAT 0x00000001
-#define NOTE_MADVISE 0x0080
-#define NOTE_EXIT 0x80000000U
-#define NOTE_FORK 0x40000000U
-#define NOTE_EXEC 0x20000000U
-#define NOTE_TRACK 0x00000001
-#define NOTE_TRACKERR 0x00000002
-#define NOTE_CHILD 0x00000004
-#define NOTE_FFNOP 0x00000000
-#define NOTE_FFAND 0x40000000U
-#define NOTE_FFOR 0x80000000U
-#define NOTE_FFCOPY 0xc0000000U
-#define NOTE_FFCTRLMASK 0xc0000000U
-#define NOTE_FFLAGSMASK 0x00ffffffU
-#define NOTE_TRIGGER 0x01000000U
-#define NOTE_SECONDS 0x00000001
-#define NOTE_USECONDS 0x00000002
-#define NOTE_NSECONDS 0x00000003
 #endif
 #ifndef IPV6_RTHDR_TYPE_0
 #define IPV6_RTHDR_TYPE_0 0
@@ -1765,9 +1809,6 @@ static __inline int inet6_rth_add(void *bp, const void *addr) { (void)bp; (void)
 #define IPOPT_OLEN 1
 #define IPOPT_OFFSET 2
 #define IPOPT_MINOFF 4
-#endif
-#ifndef S_IFWHT
-#define S_IFWHT 0160000
 #endif
 #ifndef S_ISWHT
 #define S_ISWHT(m) (((m) & S_IFMT) == S_IFWHT)
@@ -1856,16 +1897,11 @@ struct loadavg {
     long fscale;
 };
 #endif
-static __inline int iswrune(wint_t wc) {
-    return (wc >= 0 && wc <= 0x10ffff);
-}
 static __inline int getloadavg(double loadavg[], int nelem) {
     int i;
     for (i = 0; i < nelem; ++i) loadavg[i] = 0.0;
     return nelem;
 }
-struct sockaddr;
-int sockaddr_snprintf(char *buf, size_t len, const char *fmt, const struct sockaddr *sa);
 #if defined(_WIN32)
 static __inline int fbsd_setsockopt_compat(SOCKET s, int level, int optname, const void *optval, socklen_t optlen) {
     return setsockopt(s, level, optname, (const char *)optval, (int)optlen);
@@ -1902,16 +1938,6 @@ static __inline void *gethostbyname2(const char *name, int af) {
     (void)af;
     return (void *)gethostbyname(name);
 }
-#ifndef EV_SET
-#define EV_SET(kevp, a, b, c, d, e, f) do { \
-    (kevp)->ident = (uintptr_t)(a); \
-    (kevp)->filter = (short)(b); \
-    (kevp)->flags = (unsigned short)(c); \
-    (kevp)->fflags = (unsigned int)(d); \
-    (kevp)->data = (intptr_t)(e); \
-    (kevp)->udata = (void *)(f); \
-} while (0)
-#endif
 #ifndef PRIO_PROCESS
 #define PRIO_PROCESS 0
 #define PRIO_PGRP 1
@@ -2022,8 +2048,6 @@ static __inline char *fbsd_getpass_compat(const char *prompt) {
 #define getpass fbsd_getpass_compat
 #endif
 static __inline int initgroups(const char *user, gid_t group) { (void)user; (void)group; return 0; }
-static __inline int setlogin(const char *name) { (void)name; return 0; }
-static __inline int revoke(const char *path) { (void)path; return 0; }
 static __inline const char *hstrerror(int err) { (void)err; return "resolver error"; }
 static __inline void herror(const char *s) {
     if (s && *s) fprintf(stderr, "%s: resolver error\n", s);
@@ -2040,15 +2064,6 @@ static __inline FILE *open_memstream(char **bufp, size_t *sizep) {
     if (sizep) *sizep = 0;
     return tmpfile();
 }
-static const char *const fbsd_sys_signame_compat[32] = {
-    "Signal 0", "hup", "int", "quit", "ill", "trap", "abrt", "emt",
-    "fpe", "kill", "bus", "segv", "sys", "pipe", "alrm", "term",
-    "urg", "stop", "tstp", "cont", "chld", "ttin", "ttou", "io",
-    "xcpu", "xfsz", "vtalrm", "prof", "winch", "info", "usr1", "usr2"
-};
-#ifndef sys_signame
-#define sys_signame fbsd_sys_signame_compat
-#endif
 #endif
 
 #ifdef __cplusplus
@@ -2056,6 +2071,7 @@ static const char *const fbsd_sys_signame_compat[32] = {
 #endif
 #endif
 ]=])
+    string(CONFIGURE "${_preinclude_h}" _preinclude_h @ONLY)
     set(_preinclude_path "${ARG_INC_DIR}/freebsd_compat_preinclude.h")
     file(WRITE "${_preinclude_path}" "${_preinclude_h}")
 

@@ -1,0 +1,34 @@
+--- a/usr.bin/stat/stat.c
++++ b/usr.bin/stat/stat.c
+@@ -41,11 +41,20 @@
+ #if HAVE_CONFIG_H
+ #include "config.h" 
+ #else  /* HAVE_CONFIG_H */
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ #define HAVE_STRUCT_STAT_ST_FLAGS 1
+ #define HAVE_STRUCT_STAT_ST_GEN 1
+ #define HAVE_STRUCT_STAT_ST_BIRTHTIME 1
+ #define HAVE_STRUCT_STAT_ST_MTIMENSEC 1
+ #define HAVE_DEVNAME 1
++#else
++#define HAVE_STRUCT_STAT_ST_FLAGS 0
++#define HAVE_STRUCT_STAT_ST_GEN 0
++#define HAVE_STRUCT_STAT_ST_BIRTHTIME 0
++#define HAVE_STRUCT_STAT_ST_MTIMENSEC 0
++#define HAVE_STRUCT_STAT_ST_ATIM 1
++#define HAVE_DEVNAME 0
++#endif
+ #endif /* HAVE_CONFIG_H */
+ 
+ #include <sys/param.h>
+--- a/usr.bin/rpcinfo/rpcinfo.c
++++ b/usr.bin/rpcinfo/rpcinfo.c
+@@ -594,7 +594,7 @@
+ 	const char *hostname;
+ 	struct sockaddr *sa = (struct sockaddr *)who->buf;
+ 
+-	if (getnameinfo(sa, sa->sa_len, hostbuf, NI_MAXHOST, NULL, 0, 0)) {
++	if (getnameinfo(sa, (socklen_t)who->len, hostbuf, NI_MAXHOST, NULL, 0, 0)) {
+ 		hostname = UNKNOWN;
+ 	} else {
+ 		hostname = hostbuf;

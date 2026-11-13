@@ -26,6 +26,7 @@ from scripts.errors import ErrorCode, FreeBsdPortError
 from scripts.section3_shims import (
     emit_curses_section3_sources,
     emit_libarchive_win32_sources,
+    emit_libdialog_section3_sources,
     emit_libedit_section3_sources,
     emit_libmp_section3_sources,
     emit_libsys_section3_sources,
@@ -511,6 +512,36 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
             dst.write_text(txt, encoding="utf-8")
             emitted[f"codegen/ldns/ldns/{hdr_file.name}"] = dst
 
+    dpv_hdr_in = freebsd_src / "lib" / "libdpv" / "dpv.h"
+    if dpv_hdr_in.is_file():
+        dpv_out = codegen_root / "libdpv"
+        dpv_out.mkdir(parents=True, exist_ok=True)
+        dpv_prefix = (
+            LF.join(
+                [
+                    "#if defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)",
+                    "#if defined(fbsd_libdpv_EXPORTS)",
+                    "#define _FBSD_DPV_DATA extern __declspec(dllexport)",
+                    "#elif !defined(FBSD_DPV_STATIC)",
+                    "#define _FBSD_DPV_DATA extern __declspec(dllimport)",
+                    "#else",
+                    "#define _FBSD_DPV_DATA extern",
+                    "#endif",
+                    "#else",
+                    "#define _FBSD_DPV_DATA extern",
+                    "#endif",
+                    "",
+                ]
+            )
+            + LF
+        )
+        dpv_txt = dpv_hdr_in.read_text(encoding="utf-8", errors="ignore")
+        for sym in ("long long dpv_overall_read;", "int dpv_interrupt;", "int dpv_abort;"):
+            dpv_txt = dpv_txt.replace(f"extern {sym}", f"_FBSD_DPV_DATA {sym}")
+        dpv_dst = (dpv_out / "dpv.h").resolve()
+        dpv_dst.write_text(dpv_prefix + dpv_txt, encoding="utf-8")
+        emitted["codegen/libdpv/dpv.h"] = dpv_dst
+
     return emitted
 
 
@@ -652,6 +683,8 @@ def generate_contrib_config_header(lib_name: str, version: str = "15.0.0") -> st
                 "#define HAVE_ZSTD_COMPRESSSTREAM 1",
                 "#define HAVE_EXPAT_H 1",
                 "#define HAVE_BSDXML_H 1",
+                "#define HAVE_FNMATCH 1",
+                "#define HAVE_FNMATCH_H 1",
                 "#if defined(_WIN32)",
                 "#define HAVE_WINDOWS_H 1",
                 "#define HAVE_BCRYPT_H 1",
@@ -993,6 +1026,7 @@ def emit_all_codegen_helpers(freebsd_src: Path, generated_dir: Path) -> dict[str
 
     for sub_key, emitter in (
         ("libarchive", emit_libarchive_win32_sources),
+        ("libdialog", emit_libdialog_section3_sources),
         ("libedit", emit_libedit_section3_sources),
         ("libmp", emit_libmp_section3_sources),
         ("libsys", emit_libsys_section3_sources),

@@ -474,6 +474,39 @@ def test_stage_and_audit_synthetic_and_real_tree(
     cmd_dir.mkdir()
     (cmd_dir / "Makefile").write_text(f"SCRIPTS= command.sh{NL}", encoding="utf-8")
 
+    alias_dir = synth_usr_bin / "alias"
+    alias_dir.mkdir()
+    (alias_dir / "Makefile").write_text(f"SCRIPTS= generic.sh{NL}", encoding="utf-8")
+
+    less_dir = synth_usr_bin / "less"
+    less_dir.mkdir()
+    (less_dir / "Makefile").write_text(f"PROG= less{NL}SRCS= main.c{NL}", encoding="utf-8")
+    (less_dir / "main.c").write_text(f"int main(void) {{ return 0; }}{NL}", encoding="utf-8")
+    (less_dir / "defines.h").write_text(f"#define LESS_DEFS 1{NL}", encoding="utf-8")
+
+    lesskey_dir = synth_usr_bin / "lesskey"
+    lesskey_dir.mkdir()
+    (lesskey_dir / "Makefile").write_text(f"PROG= lesskey{NL}SRCS= main.c{NL}", encoding="utf-8")
+    (lesskey_dir / "main.c").write_text(f"int main(void) {{ return 0; }}{NL}", encoding="utf-8")
+
+    dpv_lib = synth_src / "lib" / "libdpv"
+    dpv_lib.mkdir(parents=True)
+    (dpv_lib / "dpv.h").write_text(f"extern int dpv_interrupt;{NL}", encoding="utf-8")
+    dpv_dir = synth_usr_bin / "dpv"
+    dpv_dir.mkdir()
+    (dpv_dir / "Makefile").write_text(
+        f"PROG= dpv{NL}SRCS= main.c{NL}LIBADD= dpv dialog{NL}", encoding="utf-8"
+    )
+    (dpv_dir / "main.c").write_text(f"int main(void) {{ return 0; }}{NL}", encoding="utf-8")
+
+    mandoc_dir = synth_usr_bin / "mandoc"
+    mandoc_dir.mkdir()
+    (mandoc_dir / "Makefile").write_text(
+        f"PROG= mandoc{NL}SRCS= main.c compat_recallocarray.c{NL}", encoding="utf-8"
+    )
+    (mandoc_dir / "main.c").write_text(f"int main(void) {{ return 0; }}{NL}", encoding="utf-8")
+    (mandoc_dir / "compat_recallocarray.c").write_text(f"int r;{NL}", encoding="utf-8")
+
     bc_gen = synth_src / "contrib" / "bc" / "gen"
     bc_gen.mkdir(parents=True)
     (bc_gen / "lib.bc").write_text(f"{NL}scale=20{NL}", encoding="utf-8")
@@ -515,7 +548,7 @@ def test_stage_and_audit_synthetic_and_real_tree(
     # Direct _parse_single_makefile_dir call before codegen exercises missing-file branches
     from scripts.parse_freebsd_usr_bin import _parse_single_makefile_dir
 
-    for pre_sub in ("mt", "vacation", "ncurses", "vmstat", "localedef", "grep"):
+    for pre_sub in ("mt", "vacation", "ncurses", "vmstat", "localedef", "grep", "lesskey", "dpv"):
         _parse_single_makefile_dir(
             (synth_usr_bin / pre_sub).resolve(),
             pre_sub,
@@ -532,16 +565,18 @@ def test_stage_and_audit_synthetic_and_real_tree(
     # Second invocation onto same synth_out hits pre-existing fallback dispatcher branch
     audit_freebsd_usr_bin_binaries(synth_src, synth_out)
     assert top_mks == ["Makefile"]
-    assert len(synth_specs) == 18
+    assert len(synth_specs) == 23
     gamma_bin = next(b for b in synth_bins if b.prog == "gamma")
     assert gamma_bin.yacc_sources
     assert gamma_bin.lex_sources
     assert gamma_bin.generated_headers == ("gen_hdr.h",)
     assert gamma_bin.section3_targets == ("fbsd_libxo",)
     assert gamma_bin.links == ("gamma_alias",)
+    mandoc_bin = next(b for b in synth_bins if b.prog == "mandoc")
+    assert all(not s.endswith("compat_recallocarray.c") for s in mandoc_bin.sources)
 
     _, compat_specs = audit_freebsd_usr_bin(synth_src, tmp_path / "compat_out")
-    assert len(compat_specs) == 18
+    assert len(compat_specs) == 23
 
     json_p, cmake_p = write_manifest_files(top_mks, synth_specs, synth_out, binaries=synth_bins)
     assert json_p.is_file()

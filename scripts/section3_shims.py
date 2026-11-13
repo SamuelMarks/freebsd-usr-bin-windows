@@ -578,6 +578,7 @@ def emit_curses_section3_sources(out_dir: Path) -> dict[str, Path]:
                 "int resize_term(int lines, int columns);",
                 "void use_env(bool f);",
                 "void filter(void);",
+                "chtype getattrs(const WINDOW *w);",
                 "const char *curses_version(void);",
                 "#ifdef __cplusplus",
                 "}",
@@ -1168,6 +1169,7 @@ def emit_curses_section3_sources(out_dir: Path) -> dict[str, Path]:
                 "    return (c == EOF) ? ERR : c;",
                 "}",
                 "int getch(void) { return wgetch(stdscr ? stdscr : initscr()); }",
+                "chtype getattrs(const WINDOW *w) { return w ? w->_attrs : 0U; }",
                 "int mvgetch(int y, int x) { return move(y, x) == ERR ? ERR : getch(); }",
                 (
                     "int mvwgetch(WINDOW *w, int y, int x) { return wmove(w, y, x) == ERR"
@@ -2813,6 +2815,293 @@ def emit_libarchive_win32_sources(out_dir: Path) -> dict[str, Path]:
         ("fbsd_libarchive_win32.c", archive_win_c),
     ):
         dst = (out_dir / rel_name).resolve()
+        dst.write_text(content, encoding="utf-8")
+        emitted[rel_name] = dst
+    return emitted
+
+
+def emit_libdialog_section3_sources(dialog_dir: Path) -> dict[str, Path]:
+    """Emit portable C89 Section 3 ``libdialog`` headers and implementation.
+
+    Provides the ``dialog(3)`` ABI (``init_dialog``, ``end_dialog``,
+    ``dlg_put_backtitle``, ``dlg_reallocate_gauge``, ``dlg_update_gauge``,
+    ``dlg_free_gauge``, ``dlg_color_pair``, ``dialog_gauge``, ``dialog_state``,
+    ``dialog_vars``, and ``dlg_color_table``) backed by ``fbsd_libcurses`` for
+    FreeBSD 15.0 ``libdpv`` and ``dpv(1)`` across Windows, DOS, and Unix.
+
+    Args:
+        dialog_dir: Destination ``codegen/libdialog`` directory.
+
+    Returns:
+        Mapping of generated relative filenames to resolved ``Path``s.
+    """
+    dialog_dir.mkdir(parents=True, exist_ok=True)
+    emitted: dict[str, Path] = {}
+
+    dlg_config_h = (
+        LF.join(
+            [
+                "#ifndef DLG_CONFIG_H_included",
+                "#define DLG_CONFIG_H_included 1",
+                '#define DIALOG_VERSION "1.3"',
+                "#define DIALOG_PATCHDATE 20210117",
+                "#define HAVE_COLOR 1",
+                "#define HAVE_DLG_GAUGE 1",
+                "#define HAVE_RC_FILE 1",
+                "#define HAVE_RC_FILE2 1",
+                "#endif",
+            ]
+        )
+        + LF
+    )
+
+    dlg_colors_h = (
+        LF.join(
+            [
+                "#ifndef DLG_COLORS_H_included",
+                "#define DLG_COLORS_H_included 1",
+                "#define DLG_COLOR_COUNT 36",
+                "#endif",
+            ]
+        )
+        + LF
+    )
+
+    dlg_keys_h = (
+        LF.join(
+            [
+                "#ifndef DLG_KEYS_H_included",
+                "#define DLG_KEYS_H_included 1",
+                "#endif",
+            ]
+        )
+        + LF
+    )
+
+    dialog_h = (
+        LF.join(
+            [
+                "#ifndef DIALOG_H_included",
+                "#define DIALOG_H_included 1",
+                "#include <curses.h>",
+                "#include <stdio.h>",
+                '#include "dlg_config.h"',
+                '#include "dlg_colors.h"',
+                '#include "dlg_keys.h"',
+                "",
+                "#if defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)",
+                "#if defined(fbsd_libdialog_EXPORTS)",
+                "#define _FBSD_DLG_DATA extern __declspec(dllexport)",
+                "#elif !defined(FBSD_DIALOG_STATIC)",
+                "#define _FBSD_DLG_DATA extern __declspec(dllimport)",
+                "#else",
+                "#define _FBSD_DLG_DATA extern",
+                "#endif",
+                "#else",
+                "#define _FBSD_DLG_DATA extern",
+                "#endif",
+                "",
+                "#ifndef TRUE",
+                "#define TRUE 1",
+                "#endif",
+                "#ifndef FALSE",
+                "#define FALSE 0",
+                "#endif",
+                "#define DLG_EXIT_OK 0",
+                "#define DLG_EXIT_CANCEL 1",
+                "#define DLG_EXIT_ERROR 255",
+                "#define SCREEN_ATTR 0",
+                "#define BUTTON_ACTIVE_ATTR 5",
+                "#define GAUGE_ATTR 33",
+                "",
+                "typedef struct {",
+                "    FILE *input;",
+                "    FILE *output;",
+                "    FILE *pipe_input;",
+                "    int screen_initialized;",
+                "    int use_colors;",
+                "    int use_shadow;",
+                "    int screen_height;",
+                "    int screen_width;",
+                "} DIALOG_STATE;",
+                "",
+                "typedef struct {",
+                "    char *backtitle;",
+                "    char *title;",
+                "    int colors;",
+                "    int dlg_clear_screen;",
+                "    int keep_tite;",
+                "} DIALOG_VARS;",
+                "",
+                "typedef struct {",
+                "    chtype atr;",
+                "    int fg;",
+                "    int bg;",
+                "    int hilite;",
+                "    int ul;",
+                "    int rv;",
+                "    const char *name;",
+                "    const char *comment;",
+                "} DIALOG_COLORS;",
+                "",
+                "_FBSD_DLG_DATA DIALOG_STATE dialog_state;",
+                "_FBSD_DLG_DATA DIALOG_VARS dialog_vars;",
+                "_FBSD_DLG_DATA DIALOG_COLORS dlg_color_table[DLG_COLOR_COUNT];",
+                "",
+                "const char *dialog_version(void);",
+                "void init_dialog(FILE *input, FILE *output);",
+                "void end_dialog(void);",
+                "void dlg_clear(void);",
+                "void dlg_put_backtitle(void);",
+                "chtype dlg_color_pair(int foreground, int background);",
+                (
+                    "void *dlg_reallocate_gauge(void *objptr, const char *title, "
+                    "const char *cprompt, int height, int width, int percent);"
+                ),
+                "void dlg_update_gauge(void *objptr, int percent);",
+                "void dlg_free_gauge(void *objptr);",
+                (
+                    "int dialog_gauge(const char *title, const char *cprompt, "
+                    "int height, int width, int percent);"
+                ),
+                "#endif",
+            ]
+        )
+        + LF
+    )
+
+    fbsd_dialog_c = (
+        LF.join(
+            [
+                '#include "dialog.h"',
+                "#include <stdlib.h>",
+                "#include <string.h>",
+                "",
+                "typedef struct {",
+                "    char title[128];",
+                "    char prompt[1024];",
+                "    int height;",
+                "    int width;",
+                "    int percent;",
+                "} fbsd_dlg_gauge_t;",
+                "",
+                "DIALOG_STATE dialog_state = { NULL, NULL, NULL, 0, 1, 1, 24, 80 };",
+                "DIALOG_VARS dialog_vars = { NULL, NULL, 1, 0, 0 };",
+                "DIALOG_COLORS dlg_color_table[DLG_COLOR_COUNT];",
+                "",
+                "static void fbsd_dlg_init_colors(void) {",
+                "    int i;",
+                "    for (i = 0; i < DLG_COLOR_COUNT; i++) {",
+                "        dlg_color_table[i].fg = 7;",
+                "        dlg_color_table[i].bg = 4;",
+                "        dlg_color_table[i].hilite = 0;",
+                "    }",
+                "    dlg_color_table[BUTTON_ACTIVE_ATTR].fg = 7;",
+                "    dlg_color_table[BUTTON_ACTIVE_ATTR].bg = 4;",
+                "    dlg_color_table[BUTTON_ACTIVE_ATTR].hilite = 1;",
+                "    dlg_color_table[GAUGE_ATTR].fg = 4;",
+                "    dlg_color_table[GAUGE_ATTR].bg = 7;",
+                "    dlg_color_table[GAUGE_ATTR].hilite = 1;",
+                "}",
+                "",
+                "const char *dialog_version(void) { return DIALOG_VERSION; }",
+                "",
+                "void init_dialog(FILE *input, FILE *output) {",
+                "    fbsd_dlg_init_colors();",
+                "    dialog_state.input = input ? input : stdin;",
+                "    dialog_state.output = output ? output : stdout;",
+                "    initscr();",
+                "    if (has_colors()) { start_color(); }",
+                "    dialog_state.screen_initialized = 1;",
+                "    dialog_state.screen_height = LINES > 0 ? LINES : 24;",
+                "    dialog_state.screen_width = COLS > 0 ? COLS : 80;",
+                "}",
+                "",
+                "void end_dialog(void) {",
+                "    if (dialog_state.screen_initialized) {",
+                "        endwin();",
+                "        dialog_state.screen_initialized = 0;",
+                "    }",
+                "}",
+                "",
+                "void dlg_clear(void) {",
+                "    clear();",
+                "}",
+                "",
+                "void dlg_put_backtitle(void) {",
+                "    if (dialog_vars.backtitle != NULL) {",
+                "        mvaddstr(0, 1, dialog_vars.backtitle);",
+                "        refresh();",
+                "    }",
+                "}",
+                "",
+                "chtype dlg_color_pair(int foreground, int background) {",
+                "    short pair_id = (short)(((foreground & 7) << 3) | (background & 7));",
+                "    if (pair_id <= 0) { pair_id = 1; }",
+                "    init_pair(pair_id, (short)foreground, (short)background);",
+                "    return (chtype)COLOR_PAIR(pair_id);",
+                "}",
+                "",
+                (
+                    "void *dlg_reallocate_gauge(void *objptr, const char *title, "
+                    "const char *cprompt, int height, int width, int percent) {"
+                ),
+                "    fbsd_dlg_gauge_t *g = (fbsd_dlg_gauge_t *)objptr;",
+                "    if (g == NULL) {",
+                "        g = (fbsd_dlg_gauge_t *)calloc(1U, sizeof(*g));",
+                "        if (g == NULL) { return NULL; }",
+                "    }",
+                "    if (title != NULL) {",
+                "        strncpy(g->title, title, sizeof(g->title) - 1U);",
+                "        g->title[sizeof(g->title) - 1U] = 0;",
+                "    }",
+                "    if (cprompt != NULL) {",
+                "        strncpy(g->prompt, cprompt, sizeof(g->prompt) - 1U);",
+                "        g->prompt[sizeof(g->prompt) - 1U] = 0;",
+                "    }",
+                "    g->height = height > 0 ? height : 7;",
+                "    g->width = width > 0 ? width : 60;",
+                "    g->percent = percent;",
+                "    return g;",
+                "}",
+                "",
+                "void dlg_update_gauge(void *objptr, int percent) {",
+                "    fbsd_dlg_gauge_t *g = (fbsd_dlg_gauge_t *)objptr;",
+                "    int pct = percent < 0 ? 0 : (percent > 100 ? 100 : percent);",
+                "    if (g == NULL) { return; }",
+                "    g->percent = pct;",
+                "    if (g->title[0] != 0) { mvaddstr(2, 4, g->title); }",
+                "    if (g->prompt[0] != 0) { mvaddstr(4, 4, g->prompt); }",
+                '    mvprintw(6, 4, "[%3d%%]", pct);',
+                "    refresh();",
+                "}",
+                "",
+                "void dlg_free_gauge(void *objptr) {",
+                "    free(objptr);",
+                "}",
+                "",
+                (
+                    "int dialog_gauge(const char *title, const char *cprompt, "
+                    "int height, int width, int percent) {"
+                ),
+                "    void *g = dlg_reallocate_gauge(NULL, title, cprompt, height, width, percent);",
+                "    dlg_update_gauge(g, percent);",
+                "    dlg_free_gauge(g);",
+                "    return DLG_EXIT_OK;",
+                "}",
+            ]
+        )
+        + LF
+    )
+
+    for rel_name, content in (
+        ("dlg_config.h", dlg_config_h),
+        ("dlg_colors.h", dlg_colors_h),
+        ("dlg_keys.h", dlg_keys_h),
+        ("dialog.h", dialog_h),
+        ("fbsd_dialog.c", fbsd_dialog_c),
+    ):
+        dst = (dialog_dir / rel_name).resolve()
         dst.write_text(content, encoding="utf-8")
         emitted[rel_name] = dst
     return emitted
