@@ -112,6 +112,7 @@ def render_per_binary_cmakelists(
             "        set(FREEBSD_SECTION3_SHARED OFF)",
             "    else()",
             "        set(FREEBSD_TARGET_DOS OFF)",
+            "        set(CMAKE_POSITION_INDEPENDENT_CODE ON)",
             "    endif()",
             "    if(FREEBSD_USE_AUTO_WIN_MSVC)",
             "        include(FetchContent)",
@@ -259,11 +260,16 @@ def render_per_binary_cmakelists(
             "    WITHOUT_CASPER=1",
         ]
     )
+    dos_str_defs: list[tuple[str, str]] = []
+    bracket_defs: list[str] = []
     for cdef in spec.compile_defs:
         cleaned = re.sub(r"^([A-Za-z0-9_]+=)'(\".*\")'$", r"\1\2", cdef)
         cleaned = cleaned.replace('\\"', '"')
         if '"' in cleaned or "\\" in cleaned:
-            lines.append(f"    [=[{cleaned}]=]")
+            eq_idx = cleaned.find("=")
+            if eq_idx > 0:
+                dos_str_defs.append((cleaned[:eq_idx], cleaned[eq_idx + 1 :]))
+            bracket_defs.append(f"        [=[{cleaned}]=]")
         else:
             lines.append(f'    "{cleaned}"')
     lines.extend(
@@ -276,6 +282,16 @@ def render_per_binary_cmakelists(
             "    $<$<BOOL:${WIN32}>:NOMINMAX>",
             ")",
             "",
+        ]
+    )
+    if bracket_defs:
+        lines.append("if(NOT FREEBSD_TARGET_DOS)")
+        lines.append("    target_compile_definitions(${_FBSD_TARGET} PRIVATE")
+        lines.extend(bracket_defs)
+        lines.append("    )")
+        lines.append("endif()")
+    lines.extend(
+        [
             'set(_AWM_CFG "${CMAKE_BINARY_DIR}/posix_includes/auto-win-msvc-configure.h")',
             'set(_PREINC "${FREEBSD_GEN_DIR}/include/freebsd_compat_preinclude.h")',
             'if(EXISTS "${_AWM_CFG}")',
@@ -288,17 +304,62 @@ def render_per_binary_cmakelists(
             '        target_compile_options(${_FBSD_TARGET} PRIVATE "SHELL:-include ${_AWM_CFG}")',
             "    endif()",
             "endif()",
-            'if(EXISTS "${_PREINC}")',
-            "    if(FREEBSD_TARGET_DOS)",
-            '        file(TO_NATIVE_PATH "${_PREINC}" _PRE_NAT)',
-            '        target_compile_options(${_FBSD_TARGET} PRIVATE "-fi=${_PRE_NAT}")',
-            "    elseif(MSVC)",
-            '        target_compile_options(${_FBSD_TARGET} PRIVATE "/FI${_PREINC}")',
-            "    else()",
-            '        target_compile_options(${_FBSD_TARGET} PRIVATE "SHELL:-include ${_PREINC}")',
-            "    endif()",
-            "endif()",
+        ]
+    )
+    if dos_str_defs:
+        hdr_body = LF.join(
+            f"#ifndef {d_key}{LF}#define {d_key} {d_val}{LF}#endif" for d_key, d_val in dos_str_defs
+        )
+        lines.extend(
+            [
+                "if(FREEBSD_TARGET_DOS)",
+                f'    set(_DOS_STRDEFS "${{CMAKE_CURRENT_BINARY_DIR}}/fbsd_strdefs_{safe_id}.h")',
+                (
+                    f'    file(WRITE "${{_DOS_STRDEFS}}" [=[{hdr_body}{LF}]=]'
+                    f' "#include \\"${{_PREINC}}\\"\\n")'
+                ),
+                '    file(TO_NATIVE_PATH "${_DOS_STRDEFS}" _DOS_STRDEFS_NAT)',
+                '    target_compile_options(${_FBSD_TARGET} PRIVATE "-fi=${_DOS_STRDEFS_NAT}")',
+                'elseif(EXISTS "${_PREINC}")',
+                "    if(MSVC)",
+                '        target_compile_options(${_FBSD_TARGET} PRIVATE "/FI${_PREINC}")',
+                "    else()",
+                (
+                    "        target_compile_options(${_FBSD_TARGET} PRIVATE "
+                    '"SHELL:-include ${_PREINC}")'
+                ),
+                "    endif()",
+                "endif()",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                'if(EXISTS "${_PREINC}")',
+                "    if(FREEBSD_TARGET_DOS)",
+                '        file(TO_NATIVE_PATH "${_PREINC}" _PRE_NAT)',
+                '        target_compile_options(${_FBSD_TARGET} PRIVATE "-fi=${_PRE_NAT}")',
+                "    elseif(MSVC)",
+                '        target_compile_options(${_FBSD_TARGET} PRIVATE "/FI${_PREINC}")',
+                "    else()",
+                (
+                    "        target_compile_options(${_FBSD_TARGET} PRIVATE "
+                    '"SHELL:-include ${_PREINC}")'
+                ),
+                "    endif()",
+                "endif()",
+            ]
+        )
+    lines.extend(
+        [
             "if(FREEBSD_TARGET_DOS)",
+            (
+                "    target_compile_options(${_FBSD_TARGET} PRIVATE "
+                '"$<$<COMPILE_LANGUAGE:C>:-zastd=c99>" '
+                '"$<$<COMPILE_LANGUAGE:C>:-ze>" '
+                '"$<$<COMPILE_LANGUAGE:C>:-aa>" '
+                '"-wcd=201" "-wcd=202")'
+            ),
             '    target_link_options(${_FBSD_TARGET} PRIVATE "option" "stack=524288")',
             "elseif(MSVC)",
             (

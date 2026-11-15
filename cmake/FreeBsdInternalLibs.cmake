@@ -251,10 +251,20 @@ EXPORTS
     set(_S3_AWM_CFG "${CMAKE_BINARY_DIR}/posix_includes/auto-win-msvc-configure.h")
     set(_S3_PREINC "${_FBSD_GEN_BASE}/include/freebsd_compat_preinclude.h")
     if(EXISTS "${_S3_AWM_CFG}" AND EXISTS "${_S3_PREINC}")
-        if(MSVC)
+        if(FREEBSD_TARGET_DOS)
+            file(TO_NATIVE_PATH "${_S3_AWM_CFG}" _S3_AWM_NAT)
+            file(TO_NATIVE_PATH "${_S3_PREINC}" _S3_PRE_NAT)
+            target_compile_options(${_TARGET} PRIVATE
+                "$<$<COMPILE_LANGUAGE:C>:-zastd=c99>"
+                "$<$<COMPILE_LANGUAGE:C>:-ze>"
+                "$<$<COMPILE_LANGUAGE:C>:-aa>"
+                "-fi=${_S3_AWM_NAT}"
+                "-fi=${_S3_PRE_NAT}"
+                "-wcd=201"
+                "-wcd=202"
+            )
+        elseif(MSVC)
             target_compile_options(${_TARGET} PRIVATE "/FI${_S3_AWM_CFG}" "/FI${_S3_PREINC}" "/wd4005" "/wd4244" "/wd4267" "/wd4996")
-        elseif(CMAKE_C_COMPILER_ID STREQUAL "OpenWatcom")
-            target_compile_options(${_TARGET} PRIVATE "-fi=${_S3_AWM_CFG}" "-fi=${_S3_PREINC}" "-wcd=201" "-wcd=202")
         else()
             target_compile_options(${_TARGET} PRIVATE
                 "SHELL:-include ${_S3_AWM_CFG}"
@@ -769,10 +779,14 @@ if(EXISTS "${_XO_DIR}/libxo.c" AND EXISTS "${FREEBSD_SRC_DIR}/lib/libxo/libxo/xo
     freebsd_add_section3_library(fbsd_libxo
         OUTPUT_NAME "fbsd_xo"
         SOURCES "${_XO_DIR}/libxo.c" "${_XO_DIR}/xo_encoder.c" "${_XO_SYSLOG_C}"
-        INCLUDES "${_XO_DIR}" "${FREEBSD_SRC_DIR}/lib/libxo" "${FREEBSD_SRC_DIR}/lib/libxo/libxo"
-        DEFINES [=[XO_ENCODERDIR="/usr/lib/libxo/encoder"]=] "dlfunc=dlsym" "__isthreaded=0"
-        PUBLIC_HEADERS "${_XO_DIR}/xo.h" "${_XO_DIR}/xo_encoder.h"
+        INCLUDES "${_FBSD_GEN_BASE}/include/libxo" "${_XO_DIR}" "${FREEBSD_SRC_DIR}/lib/libxo" "${FREEBSD_SRC_DIR}/lib/libxo/libxo"
+        DEFINES "dlfunc=dlsym" "__isthreaded=0"
+        DATA_EXPORTS xo_version xo_version_extra
+        PUBLIC_HEADERS "${_FBSD_GEN_BASE}/include/libxo/xo.h" "${_FBSD_GEN_BASE}/include/libxo/xo_encoder.h"
     )
+    if(TARGET fbsd_libxo AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libxo PUBLIC FBSD_XO_STATIC=1)
+    endif()
 else()
     _fbsd_define_portable_s3_unit(fbsd_libxo "fbsd_xo" "fbsd_xo_s3.h"
         [=[int fbsd_xo_parse_args(int argc, char **argv);]=]
@@ -794,10 +808,14 @@ typedef int fbsd_openbsd_shim_unused_t;
     if(NOT WIN32 AND NOT FREEBSD_TARGET_DOS)
         list(APPEND _OBSD_SRCS "${_OBSD_DIR}/imsg-buffer.c" "${_OBSD_DIR}/imsg.c")
     endif()
+    set(_OBSD_INC_DIRS "${_OBSD_DIR}")
+    if(IS_DIRECTORY "${_FBSD_CODEGEN_DIR}/libopenbsd")
+        set(_OBSD_INC_DIRS "${_FBSD_CODEGEN_DIR}/libopenbsd")
+    endif()
     freebsd_add_section3_library(fbsd_libopenbsd
         OUTPUT_NAME "fbsd_openbsd"
         SOURCES ${_OBSD_SRCS}
-        INCLUDES "${_OBSD_DIR}"
+        INCLUDES ${_OBSD_INC_DIRS}
         PUBLIC_HEADERS "${_OBSD_DIR}/imsg.h" "${_OBSD_DIR}/ohash.h"
     )
 else()
@@ -814,10 +832,14 @@ if(EXISTS "${_NBSD_DIR}/efun.c")
     if(NOT WIN32 AND NOT FREEBSD_TARGET_DOS)
         list(APPEND _NBSD_SRCS "${_NBSD_DIR}/sockaddr_snprintf.c")
     endif()
+    set(_NBSD_INC_DIRS "${_NBSD_DIR}")
+    if(IS_DIRECTORY "${_FBSD_CODEGEN_DIR}/libnetbsd")
+        set(_NBSD_INC_DIRS "${_FBSD_CODEGEN_DIR}/libnetbsd")
+    endif()
     freebsd_add_section3_library(fbsd_libnetbsd
         OUTPUT_NAME "fbsd_netbsd"
         SOURCES ${_NBSD_SRCS}
-        INCLUDES "${_NBSD_DIR}"
+        INCLUDES ${_NBSD_INC_DIRS}
         DEFINES "__va_list=va_list"
         PUBLIC_HEADERS "${_NBSD_DIR}/efun.h" "${_NBSD_DIR}/util.h"
     )
@@ -990,7 +1012,7 @@ if(EXISTS "${_FILE_DIR}/magic.c" AND EXISTS "${_FBSD_CODEGEN_DIR}/libmagic/magic
         OUTPUT_NAME "fbsd_magic"
         SOURCES ${_MAGIC_SRCS}
         INCLUDES "${_FBSD_CODEGEN_DIR}/libmagic" "${_FILE_DIR}"
-        DEFINES HAVE_CONFIG_H=1 [=[MAGIC="/usr/share/misc/magic"]=]
+        DEFINES HAVE_CONFIG_H=1
         LIBS fbsd_libz fbsd_libbz2 fbsd_liblzma fbsd_libzstd $<$<BOOL:${WIN32}>:shlwapi>
         PUBLIC_HEADERS "${_FBSD_CODEGEN_DIR}/libmagic/magic.h"
     )
@@ -1009,6 +1031,9 @@ endif()
 set(_ELFTC_DIR "${FREEBSD_SRC_DIR}/contrib/elftoolchain")
 if(EXISTS "${_ELFTC_DIR}/libelf/libelf.h" AND EXISTS "${_FBSD_CODEGEN_DIR}/elftoolchain/gensrcs/libelf_fsize.c")
     file(GLOB _ELFTC_ELF_C "${_ELFTC_DIR}/libelf/*.c")
+    list(FILTER _ELFTC_ELF_C EXCLUDE REGEX [=[libelf_align\.c$]=])
+    _fbsd_resolve_staged_or_upstream(_ELFTC_ALIGN_C "contrib/elftoolchain/libelf/libelf_align.c")
+    list(APPEND _ELFTC_ELF_C "${_ELFTC_ALIGN_C}")
     file(GLOB _ELFTC_TC_C "${_ELFTC_DIR}/libelftc/*.c")
     list(FILTER _ELFTC_TC_C EXCLUDE REGEX [=[elftc_version\.c$]=])
     file(GLOB _ELFTC_DW_C "${_ELFTC_DIR}/libdwarf/*.c")
@@ -1043,16 +1068,23 @@ endif()
 set(_FETCH_DIR "${FREEBSD_SRC_DIR}/lib/libfetch")
 if(EXISTS "${_FETCH_DIR}/fetch.c" AND EXISTS "${_FBSD_CODEGEN_DIR}/libfetch/ftperr.h")
     _fbsd_resolve_staged_or_upstream(_FETCH_FTP_C "lib/libfetch/ftp.c")
+    set(_FETCH_PUB_HDR "${_FETCH_DIR}/fetch.h")
+    if(EXISTS "${_FBSD_CODEGEN_DIR}/libfetch/fetch.h")
+        set(_FETCH_PUB_HDR "${_FBSD_CODEGEN_DIR}/libfetch/fetch.h")
+    endif()
     freebsd_add_section3_library(fbsd_libfetch
         OUTPUT_NAME "fbsd_fetch"
         SOURCES "${_FETCH_DIR}/fetch.c" "${_FETCH_DIR}/common.c"
                 "${_FETCH_FTP_C}" "${_FETCH_DIR}/http.c" "${_FETCH_DIR}/file.c"
-        INCLUDES "${_FETCH_DIR}" "${_FBSD_CODEGEN_DIR}/libfetch"
+        INCLUDES "${_FBSD_CODEGEN_DIR}/libfetch" "${_FETCH_DIR}"
         DEFINES FTP_COMBINE_CWDS=1
         LIBS fbsd_libmd
-        DATA_EXPORTS fetchLastErrCode fetchLastErrString fetchTimeout fetchRestartCalls fetchDebug
-        PUBLIC_HEADERS "${_FETCH_DIR}/fetch.h"
+        DATA_EXPORTS fetchAuthMethod fetchLastErrCode fetchLastErrString fetchTimeout fetchRestartCalls fetchDebug
+        PUBLIC_HEADERS "${_FETCH_PUB_HDR}"
     )
+    if(TARGET fbsd_libfetch AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libfetch PUBLIC FBSD_FETCH_STATIC=1)
+    endif()
 else()
     _fbsd_define_portable_s3_unit(fbsd_libfetch "fbsd_fetch" "fbsd_fetch_s3.h"
         [=[const char *fbsd_libfetch_abi_version(void);]=]
@@ -1081,8 +1113,16 @@ if(EXISTS "${_LDNS_DIR}/buffer.c" AND EXISTS "${_FBSD_CODEGEN_DIR}/ldns/ldns/con
         SOURCES ${_LDNS_SRCS}
         INCLUDES "${_FBSD_CODEGEN_DIR}/ldns" "${_FBSD_CODEGEN_DIR}/ldns/ldns" "${_LDNS_DIR}"
         DEFINES HAVE_CONFIG_H=1
+        DATA_EXPORTS ldns_signing_algorithms ldns_error_str
+                     ldns_algorithms ldns_cert_algorithms ldns_rr_classes ldns_rcodes
+                     ldns_opcodes ldns_edns_flags ldns_output_format_nocomments
+                     ldns_output_format_onlykeyids ldns_output_format_default
+                     ldns_output_format_bubblebabble ldns_rbtree_null_node
         PUBLIC_HEADERS "${_FBSD_CODEGEN_DIR}/ldns/ldns/ldns.h"
     )
+    if(TARGET fbsd_libldns AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libldns PUBLIC FBSD_LDNS_STATIC=1)
+    endif()
 else()
     _fbsd_define_portable_s3_unit(fbsd_libldns "fbsd_ldns" "fbsd_ldns_s3.h"
         [=[const char *fbsd_libldns_abi_version(void);]=]
@@ -1103,6 +1143,9 @@ if(EXISTS "${_FBSD_CODEGEN_DIR}/ncurses/fbsd_curses.c")
                      acs_map _nc_wacs ttytype cur_term PC UP BC ospeed
         PUBLIC_HEADERS "${_FBSD_CODEGEN_DIR}/ncurses/term.h" "${_FBSD_CODEGEN_DIR}/ncurses/termcap.h"
     )
+    if(TARGET fbsd_libtinfow AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libtinfow PUBLIC FBSD_CURSES_STATIC=1)
+    endif()
     freebsd_add_section3_library(fbsd_libcurses
         OUTPUT_NAME "fbsd_curses"
         SOURCES "${_CURSES_VER_C}"
@@ -1111,6 +1154,9 @@ if(EXISTS "${_FBSD_CODEGEN_DIR}/ncurses/fbsd_curses.c")
         PUBLIC_HEADERS "${_FBSD_CODEGEN_DIR}/ncurses/curses.h" "${_FBSD_CODEGEN_DIR}/ncurses/ncurses.h"
                        "${_FBSD_CODEGEN_DIR}/ncurses/unctrl.h"
     )
+    if(TARGET fbsd_libcurses AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libcurses PUBLIC FBSD_CURSES_STATIC=1)
+    endif()
 else()
     _fbsd_define_portable_s3_unit(fbsd_libtinfow "fbsd_tinfow" "fbsd_tinfow_s3.h"
         [=[const char *fbsd_libtinfow_abi_version(void);]=]
@@ -1135,6 +1181,9 @@ if(EXISTS "${_FBSD_CODEGEN_DIR}/libedit/fbsd_edit.c")
                      rl_completion_entry_function
         PUBLIC_HEADERS "${_FBSD_CODEGEN_DIR}/libedit/histedit.h"
     )
+    if(TARGET fbsd_libedit AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libedit PUBLIC FBSD_EDIT_STATIC=1)
+    endif()
 else()
     _fbsd_define_portable_s3_unit(fbsd_libedit "fbsd_edit" "fbsd_edit_s3.h"
         [=[const char *fbsd_libedit_abi_version(void);]=]
@@ -1247,6 +1296,9 @@ if(EXISTS "${_FBSD_CODEGEN_DIR}/libsys/fbsd_sys.c")
                        "${_FBSD_CODEGEN_DIR}/libsys/rpcsvc/ypclnt.h"
                        "${_FBSD_CODEGEN_DIR}/libsys/sys/nv.h"
     )
+    if(TARGET fbsd_libsys AND NOT FREEBSD_SECTION3_SHARED)
+        target_compile_definitions(fbsd_libsys PUBLIC FBSD_SYS_STATIC=1)
+    endif()
 else()
     _fbsd_define_portable_s3_unit(fbsd_libsys "fbsd_sys" "fbsd_sys_s3.h"
         [=[const char *fbsd_libsys_abi_version(void);]=]

@@ -1225,11 +1225,23 @@ def _parse_single_makefile_dir(
         if gen_sub.is_dir():
             inc_dirs.insert(0, str(gen_sub.resolve()))
         cg_base = (generated_dir / "codegen").resolve()
-        extra_defs = list(compile_defs)
+        extra_defs = [
+            d
+            for d in compile_defs
+            if not (d.startswith("NLSPATH=") and "BC_ENABLE_NLS=0" in compile_defs)
+        ]
         if prog_name in ("bsdcat", "bsdcpio", "bsdtar", "bsdunzip"):
             inc_dirs.insert(0, str(cg_base / "libarchive"))
-            extra_defs = [d for d in extra_defs if not d.startswith("PLATFORM_CONFIG_H")]
+            extra_defs = [
+                re.sub(r"\$\{BSD[A-Z]+_VERSION_STRING\}", "3.7.7", d)
+                for d in extra_defs
+                if not d.startswith("PLATFORM_CONFIG_H")
+            ]
             extra_defs.append('PLATFORM_CONFIG_H="config.h"')
+        if "fbsd_libfetch" in s3_targets:
+            inc_dirs.insert(0, str(cg_base / "libfetch"))
+        if "fbsd_libxo" in s3_targets:
+            inc_dirs.insert(0, str((generated_dir / "include" / "libxo").resolve()))
         if "fbsd_libldns" in s3_targets:
             inc_dirs.insert(0, str(cg_base / "ldns" / "ldns"))
             inc_dirs.insert(0, str(cg_base / "ldns"))
@@ -1364,6 +1376,15 @@ def _parse_single_makefile_dir(
                 and not (prog_name == "wg" and sp_str.endswith("wireguard-tools"))
             ):
                 inc_dirs.append(sp_str)
+        for compat_name, compat_rel in (
+            ("libnetbsd", "lib/libnetbsd"),
+            ("libopenbsd", "lib/libopenbsd"),
+        ):
+            up_dir = str((srctop / compat_rel).resolve())
+            cg_compat = (cg_base / compat_name).resolve()
+            if up_dir in inc_dirs and cg_compat.is_dir():
+                idx = inc_dirs.index(up_dir)
+                inc_dirs[idx] = str(cg_compat)
 
         top_name = rel_subdir.split("/", 1)[0]
         tier = classify_tier(top_name, True, dedup_libs, search_paths, srctop)

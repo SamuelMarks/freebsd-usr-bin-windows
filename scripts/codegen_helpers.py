@@ -489,21 +489,50 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
     if ldns_hdr_dir.is_dir():
         ldns_out = codegen_root / "ldns" / "ldns"
         ldns_out.mkdir(parents=True, exist_ok=True)
+        ldns_data_prefix = (
+            LF.join(
+                [
+                    "#ifndef _FBSD_LDNS_DATA",
+                    "#if defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)",
+                    "#if defined(fbsd_libldns_EXPORTS)",
+                    "#define _FBSD_LDNS_DATA extern __declspec(dllexport)",
+                    "#elif !defined(FBSD_LDNS_STATIC)",
+                    "#define _FBSD_LDNS_DATA extern __declspec(dllimport)",
+                    "#else",
+                    "#define _FBSD_LDNS_DATA extern",
+                    "#endif",
+                    "#else",
+                    "#define _FBSD_LDNS_DATA extern",
+                    "#endif",
+                    "#endif",
+                    "",
+                ]
+            )
+            + LF
+        )
         for hdr_file in sorted(ldns_hdr_dir.glob("*.h")):
             txt = hdr_file.read_text(encoding="utf-8", errors="ignore")
             txt = re.sub(
                 r"^#define\s+(HAVE_SSL|USE_DANE|USE_DSA|USE_ED25519|USE_ED448|"
-                r"USE_GOST|USE_ECDSA|HAVE_B64_NTOP|HAVE_B64_PTON)\b.*$",
+                r"USE_GOST|USE_ECDSA|HAVE_B64_NTOP|HAVE_B64_PTON|"
+                r"HAVE_ATTR_FORMAT|HAVE_ATTR_UNUSED)\b.*$",
                 r"#undef \1",
                 txt,
                 flags=re.MULTILINE,
             )
             txt = re.sub(
                 r"(#define\s+LDNS_BUILD_CONFIG_(?:HAVE_SSL|USE_DANE|USE_DSA|"
-                r"USE_ED25519|USE_ED448)\s+)1",
+                r"USE_ED25519|USE_ED448|HAVE_ATTR_FORMAT|HAVE_ATTR_UNUSED)\s+)1",
                 r"\g<1>0",
                 txt,
             )
+            if hdr_file.name in ("keys.h", "error.h", "ldns.h", "host2str.h", "rbtree.h"):
+                txt = ldns_data_prefix + re.sub(
+                    r"^extern\s+((?:const\s+)?ldns_(?:lookup_table|output_format|rbnode_t)\b)",
+                    r"_FBSD_LDNS_DATA \1",
+                    txt,
+                    flags=re.MULTILINE,
+                )
             if hdr_file.name == "config.h":
                 txt = f"#include <stdio.h>{LF}#include <unistd.h>{LF}" + txt.replace(
                     "#define random(x) rand(x)", "/* random kept */"
@@ -511,6 +540,42 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
             dst = (ldns_out / hdr_file.name).resolve()
             dst.write_text(txt, encoding="utf-8")
             emitted[f"codegen/ldns/ldns/{hdr_file.name}"] = dst
+
+    fetch_hdr_in = freebsd_src / "lib" / "libfetch" / "fetch.h"
+    if fetch_hdr_in.is_file():
+        fetch_out = codegen_root / "libfetch"
+        fetch_out.mkdir(parents=True, exist_ok=True)
+        fetch_prefix = (
+            LF.join(
+                [
+                    "#ifndef _FBSD_FETCH_DATA",
+                    "#if defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)",
+                    "#if defined(fbsd_libfetch_EXPORTS)",
+                    "#define _FBSD_FETCH_DATA extern __declspec(dllexport)",
+                    "#elif !defined(FBSD_FETCH_STATIC)",
+                    "#define _FBSD_FETCH_DATA extern __declspec(dllimport)",
+                    "#else",
+                    "#define _FBSD_FETCH_DATA extern",
+                    "#endif",
+                    "#else",
+                    "#define _FBSD_FETCH_DATA extern",
+                    "#endif",
+                    "#endif",
+                    "",
+                ]
+            )
+            + LF
+        )
+        fetch_txt = fetch_hdr_in.read_text(encoding="utf-8", errors="ignore")
+        fetch_txt = re.sub(
+            r"^extern\s+((?:auth_t|int|char)\s+fetch)",
+            r"_FBSD_FETCH_DATA \1",
+            fetch_txt,
+            flags=re.MULTILINE,
+        )
+        fetch_dst = (fetch_out / "fetch.h").resolve()
+        fetch_dst.write_text(fetch_prefix + fetch_txt, encoding="utf-8")
+        emitted["codegen/libfetch/fetch.h"] = fetch_dst
 
     dpv_hdr_in = freebsd_src / "lib" / "libdpv" / "dpv.h"
     if dpv_hdr_in.is_file():
@@ -541,6 +606,59 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
         dpv_dst = (dpv_out / "dpv.h").resolve()
         dpv_dst.write_text(dpv_prefix + dpv_txt, encoding="utf-8")
         emitted["codegen/libdpv/dpv.h"] = dpv_dst
+
+    nbsd_in = freebsd_src / "lib" / "libnetbsd"
+    if nbsd_in.is_dir():
+        nbsd_out = codegen_root / "libnetbsd"
+        nbsd_out.mkdir(parents=True, exist_ok=True)
+        for hname in ("efun.h", "util.h", "sha2.h"):
+            src_h = nbsd_in / hname
+            if src_h.is_file():
+                dst_h = (nbsd_out / hname).resolve()
+                dst_h.write_text(
+                    src_h.read_text(encoding="utf-8", errors="ignore"),
+                    encoding="utf-8",
+                )
+                emitted[f"codegen/libnetbsd/{hname}"] = dst_h
+
+    obsd_in = freebsd_src / "lib" / "libopenbsd"
+    if obsd_in.is_dir():
+        obsd_out = codegen_root / "libopenbsd"
+        obsd_out.mkdir(parents=True, exist_ok=True)
+        for hname in ("imsg.h", "ohash.h"):
+            src_h = obsd_in / hname
+            if src_h.is_file():
+                dst_h = (obsd_out / hname).resolve()
+                dst_h.write_text(
+                    src_h.read_text(encoding="utf-8", errors="ignore"),
+                    encoding="utf-8",
+                )
+                emitted[f"codegen/libopenbsd/{hname}"] = dst_h
+
+    lzma_base = freebsd_src / "contrib" / "xz" / "src" / "liblzma"
+    if lzma_base.is_dir():
+        lzma_out = codegen_root / "liblzma"
+        lzma_out.mkdir(parents=True, exist_ok=True)
+        for rel_h in ("common/common.h", "lz/lz_decoder.h"):
+            src_h = lzma_base / rel_h
+            if src_h.is_file():
+                htxt = src_h.read_text(encoding="utf-8", errors="ignore")
+                htxt = re.sub(
+                    r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\\\n"
+                    r"[ \t]*\(([A-Za-z_][A-Za-z0-9_]*)\)[ \t]*\{((?:\\\n|[^}\n])*)\}",
+                    lambda m: (
+                        f"static __inline {m.group(2)} _fbsd_clit_{m.group(1)}(void) {{\n"
+                        f"    {m.group(2)} _v = {{ "
+                        + re.sub(r"\\\s*\n", "\n", m.group(3)).strip()
+                        + " };\n    return _v;\n}\n"
+                        f"#define {m.group(1)} (_fbsd_clit_{m.group(1)}())"
+                    ),
+                    htxt,
+                    flags=re.MULTILINE,
+                )
+                dst_h = (lzma_out / Path(rel_h).name).resolve()
+                dst_h.write_text(htxt, encoding="utf-8")
+                emitted[f"codegen/liblzma/{Path(rel_h).name}"] = dst_h
 
     return emitted
 
@@ -695,7 +813,18 @@ def generate_contrib_config_header(lib_name: str, version: str = "15.0.0") -> st
                 "#define HAVE__GMTIME64_S 1",
                 "#define HAVE__LOCALTIME64_S 1",
                 "#define HAVE__MKGMTIME 1",
-                "#elif !defined(__DOS__)",
+                "#define HAVE__GET_TIMEZONE 1",
+                "#elif defined(__DOS__)",
+                "#define HAVE_DIRENT_H 1",
+                "#define HAVE_FCHDIR 1",
+                "#define HAVE_FCNTL 1",
+                "#define HAVE_FORK 1",
+                "#define HAVE_GRP_H 1",
+                "#define HAVE_PIPE 1",
+                "#define HAVE_PWD_H 1",
+                "#define HAVE_SYS_WAIT_H 1",
+                "#define HAVE_UNISTD_H 1",
+                "#else",
                 "#define HAVE_CHOWN 1",
                 "#define HAVE_CHROOT 1",
                 "#define HAVE_FCHDIR 1",
@@ -775,6 +904,14 @@ def generate_contrib_config_header(lib_name: str, version: str = "15.0.0") -> st
                 "#define MYTHREAD_VISTA 1",
                 "#elif !defined(__DOS__)",
                 "#define MYTHREAD_POSIX 1",
+                "#endif",
+            ]
+        )
+    elif lib_name == "libmagic":
+        common.extend(
+            [
+                "#ifndef MAGIC",
+                '#define MAGIC "/usr/share/misc/magic"',
                 "#endif",
             ]
         )

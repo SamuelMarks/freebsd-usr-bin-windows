@@ -48,6 +48,8 @@ if(WATCOM OR CMAKE_SYSTEM_NAME STREQUAL "DOS" OR CMAKE_C_COMPILER_ID MATCHES "Wa
     set(FREEBSD_TARGET_DOS ON)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "Disable shared libraries on DOS" FORCE)
     set(FREEBSD_SECTION3_SHARED OFF CACHE BOOL "Static Section 3 libraries on DOS" FORCE)
+else()
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -163,7 +165,36 @@ target_compile_definitions(fbsd_libcompat PRIVATE
     $<$<BOOL:${FREEBSD_TARGET_DOS}>:__DOS__=1>
     $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS>
     $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_DEPRECATE>
+    $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_WARNINGS>
+    $<$<BOOL:${WIN32}>:WIN32_LEAN_AND_MEAN>
+    $<$<BOOL:${WIN32}>:NOMINMAX>
 )
+set(_LC_AWM_CFG "${AWM_POSIX_INCLUDES}/auto-win-msvc-configure.h")
+set(_LC_PREINC "${FREEBSD_GEN_INC}/freebsd_compat_preinclude.h")
+if(EXISTS "${_LC_AWM_CFG}" AND EXISTS "${_LC_PREINC}")
+    if(FREEBSD_TARGET_DOS)
+        file(TO_NATIVE_PATH "${_LC_AWM_CFG}" _LC_AWM_NAT)
+        file(TO_NATIVE_PATH "${_LC_PREINC}" _LC_PRE_NAT)
+        target_compile_options(fbsd_libcompat PRIVATE
+            "$<$<COMPILE_LANGUAGE:C>:-zastd=c99>"
+            "$<$<COMPILE_LANGUAGE:C>:-ze>"
+            "$<$<COMPILE_LANGUAGE:C>:-aa>"
+            "-fi=${_LC_AWM_NAT}"
+            "-fi=${_LC_PRE_NAT}"
+            "-wcd=201"
+            "-wcd=202"
+        )
+    elseif(MSVC)
+        target_compile_options(fbsd_libcompat PRIVATE "/FI${_LC_AWM_CFG}" "/FI${_LC_PREINC}" "/wd4005" "/wd4244" "/wd4267" "/wd4996")
+    else()
+        target_compile_options(fbsd_libcompat PRIVATE
+            "SHELL:-include ${_LC_AWM_CFG}"
+            "SHELL:-include ${_LC_PREINC}"
+            "-Wno-unused-parameter"
+            "-Wno-sign-compare"
+        )
+    endif()
+endif()
 target_link_libraries(fbsd_libcompat PUBLIC auto-win-msvc)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/FreeBsdInternalLibs.cmake")
@@ -173,7 +204,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/FreeBsdInternalLibs.cmake")
 # -----------------------------------------------------------------------------
 if(FREEBSD_BUILD_INDIVIDUAL AND EXISTS "${FREEBSD_GEN_DIR}/per_binary_subdirs.cmake")
     if(NOT DEFINED FREEBSD_ENABLED_BINARIES)
-        if(FREEBSD_TARGET_DOS OR NOT (FREEBSD_HOST_YACC AND FREEBSD_HOST_LEX))
+        if(FREEBSD_TARGET_DOS OR (WIN32 AND CMAKE_CROSSCOMPILING) OR NOT (FREEBSD_HOST_YACC AND FREEBSD_HOST_LEX))
             set(FREEBSD_ENABLED_BINARIES
                 ${FREEBSD_NATIVE_DIRECT_APPLETS}
                 addr2line alias backlight biff bintrans bomtool brandelf
@@ -233,8 +264,13 @@ if(FREEBSD_BUILD_MULTICALL)
         file(TO_NATIVE_PATH "${_awm_cfg}" _awm_cfg_native)
         file(TO_NATIVE_PATH "${_fbsd_cfg}" _fbsd_cfg_native)
         target_compile_options(freebsd-usr-bin PRIVATE
+            "$<$<COMPILE_LANGUAGE:C>:-zastd=c99>"
+            "$<$<COMPILE_LANGUAGE:C>:-ze>"
+            "$<$<COMPILE_LANGUAGE:C>:-aa>"
             "-fi=${_awm_cfg_native}"
             "-fi=${_fbsd_cfg_native}"
+            "-wcd=201"
+            "-wcd=202"
         )
         target_link_options(freebsd-usr-bin PRIVATE "option" "stack=524288")
     elseif(MSVC)

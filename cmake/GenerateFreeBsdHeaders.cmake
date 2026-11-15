@@ -364,9 +364,37 @@ function(freebsd_emit_compat_headers)
 
     set(_libxo_path "${ARG_INC_DIR}/libxo/xo.h")
     if(ARG_FREEBSD_SRC_DIR AND EXISTS "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo.h")
-        file(COPY "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo.h" DESTINATION "${ARG_INC_DIR}/libxo")
+        file(READ "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo.h" _xo_h_raw)
+        string(REGEX REPLACE
+            "va_list vap;\n([ \t]*)va_start\\(vap, fmt\\);\n([ \t]*)xo_ssize_t rc = "
+            "va_list vap;\n\\1xo_ssize_t rc;\n\\1va_start(vap, fmt);\n\\2rc = "
+            _xo_h_c89 "${_xo_h_raw}"
+        )
+        set(_xo_dll_hdr [=[#ifndef _FBSD_XO_DATA
+#if defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)
+#if defined(fbsd_libxo_EXPORTS)
+#define _FBSD_XO_DATA extern __declspec(dllexport)
+#elif !defined(FBSD_XO_STATIC)
+#define _FBSD_XO_DATA extern __declspec(dllimport)
+#else
+#define _FBSD_XO_DATA extern
+#endif
+#else
+#define _FBSD_XO_DATA extern
+#endif
+#endif
+]=])
+        string(REPLACE
+            "extern const char xo_version"
+            "_FBSD_XO_DATA const char xo_version"
+            _xo_h_c89 "${_xo_dll_hdr}${_xo_h_c89}"
+        )
+        file(MAKE_DIRECTORY "${ARG_INC_DIR}/libxo")
+        file(WRITE "${_libxo_path}" "${_xo_h_c89}")
         if(EXISTS "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo_encoder.h")
-            file(COPY "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo_encoder.h" DESTINATION "${ARG_INC_DIR}/libxo")
+            file(READ "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo_encoder.h" _xo_enc_raw)
+            set(_xo_enc_hdr "#ifndef XO_ENCODERDIR\n#define XO_ENCODERDIR \"/usr/lib/libxo/encoder\"\n#endif\n")
+            file(WRITE "${ARG_INC_DIR}/libxo/xo_encoder.h" "${_xo_enc_hdr}${_xo_enc_raw}")
         endif()
     else()
         set(_libxo_h [=[#ifndef _LIBXO_XO_H_
@@ -425,6 +453,14 @@ void xo_warnc(int code, const char *fmt, ...);
 #include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/param.h>
+#if defined(__APPLE__) && defined(__GNUC__) && !defined(__clang__)
+#undef __DECONST
+#define __DECONST(type, var) ((type)(uintptr_t)(const void *)(var))
+#undef __DEVOLATILE
+#define __DEVOLATILE(type, var) ((type)(uintptr_t)(volatile void *)(var))
+#undef __DEQUALIFY
+#define __DEQUALIFY(type, var) ((type)(uintptr_t)(const volatile void *)(var))
+#endif
 #include <sys/capsicum.h>
 #include <libutil.h>
 #include <fcntl.h>
@@ -492,8 +528,40 @@ void xo_warnc(int code, const char *fmt, ...);
 #include <posix-time.h>
 #endif
 #elif defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
+#if !defined(FBSD_SKIP_PREINCLUDE_ENDIAN)
+#include <sys/endian.h>
+#endif
 #include <bsd/stdlib.h>
 #include <bsd/string.h>
+#endif
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+#ifndef __arraycount
+#define __arraycount(__x) (sizeof(__x) / sizeof((__x)[0]))
+#endif
+#ifndef __UNCONST
+#define __UNCONST(a) ((void *)(uintptr_t)(const void *)(a))
+#endif
+#ifndef ALIGNBYTES
+#define ALIGNBYTES (sizeof(uintptr_t) - 1U)
+#endif
+#ifndef ALIGN
+#define ALIGN(p) (((uintptr_t)(p) + ALIGNBYTES) & ~ALIGNBYTES)
+#endif
+#if (defined(_MSC_VER) || defined(__WATCOMC__)) && !defined(__clang__)
+#ifndef __builtin_expect
+#define __builtin_expect(x, v) (x)
+#endif
+static __inline int fbsd_ctzll_compat(unsigned long long v) {
+    int n = 0;
+    if (v == 0ULL) return 64;
+    while ((v & 1ULL) == 0ULL) { v >>= 1; n++; }
+    return n;
+}
+#ifndef __builtin_ctzll
+#define __builtin_ctzll fbsd_ctzll_compat
+#endif
 #endif
 #ifndef CLOCK_REALTIME_FAST
 #ifdef CLOCK_REALTIME
@@ -539,6 +607,24 @@ void xo_warnc(int code, const char *fmt, ...);
 #ifndef SCM_RIGHTS
 #define SCM_RIGHTS 0x01
 #endif
+#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
+#ifndef WIFEXITED
+#define WIFEXITED(s) (((s) & 0x7f) == 0)
+#endif
+#ifndef WEXITSTATUS
+#define WEXITSTATUS(s) (((s) >> 8) & 0xff)
+#endif
+#ifndef WIFSIGNALED
+#define WIFSIGNALED(s) (((s) & 0x7f) != 0 && ((s) & 0x7f) != 0x7f)
+#endif
+#ifndef WTERMSIG
+#define WTERMSIG(s) ((s) & 0x7f)
+#endif
+#endif
+#if defined(__DOS__) || defined(__WATCOMC__)
+#include <strings.h>
+#endif
+#if !defined(__WATCOMC__)
 #ifndef bzero
 #define bzero(p, n) memset((p), 0, (n))
 #endif
@@ -547,6 +633,7 @@ void xo_warnc(int code, const char *fmt, ...);
 #endif
 #ifndef bcopy
 #define bcopy(s, d, n) memmove((d), (s), (n))
+#endif
 #endif
 #ifndef LINE_MAX
 #define LINE_MAX 2048
@@ -918,6 +1005,11 @@ static const struct fbsd_rune_locale_compat fbsd_default_rune_locale = { "UTF-8"
 #endif
 #ifndef __assert_unreachable
 #define __assert_unreachable() abort()
+#endif
+#if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && defined(__has_include)
+#if __has_include(<nl_types.h>)
+#include <nl_types.h>
+#endif
 #endif
 #ifndef _NLS_MAGIC
 #define _NLS_MAGIC 0xff88ff89
@@ -1374,10 +1466,153 @@ static const char *const rlimit_ident[@_fbsd_rlim_nlimits@] = {
 #include <time.h>
 #if defined(_WIN32)
 #include <io.h>
+#elif defined(__DOS__) || defined(__WATCOMC__)
+#include <process.h>
+#include <setjmp.h>
+#include <strings.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#undef __thread
+#define __thread
+#ifndef __typeof
+#define __typeof(x) void *
+#endif
+#ifndef SAIDX64_T
+#define SAIDX64_T
+typedef off_t saidx64_t;
+#endif
+#ifndef sigjmp_buf
+typedef jmp_buf sigjmp_buf;
+#define sigsetjmp(env, savemask) ((void)(savemask), setjmp(env))
+#define siglongjmp(env, val) longjmp((env), (val))
+#endif
+#endif
+
+#ifndef SSIZE_MAX
+#ifdef LONG_MAX
+#define SSIZE_MAX LONG_MAX
+#else
+#define SSIZE_MAX 2147483647L
+#endif
+#endif
+#ifndef EAI_BADFLAGS
+#define EAI_BADFLAGS (-1)
+#endif
+#ifndef EAI_NONAME
+#define EAI_NONAME (-2)
+#endif
+#ifndef EAI_AGAIN
+#define EAI_AGAIN (-3)
+#endif
+#ifndef EAI_FAIL
+#define EAI_FAIL (-4)
+#endif
+#ifndef EAI_FAMILY
+#define EAI_FAMILY (-6)
+#endif
+#ifndef EAI_SOCKTYPE
+#define EAI_SOCKTYPE (-7)
+#endif
+#ifndef EAI_SERVICE
+#define EAI_SERVICE (-8)
+#endif
+#ifndef EAI_MEMORY
+#define EAI_MEMORY (-10)
+#endif
+#ifndef EAI_SYSTEM
+#define EAI_SYSTEM (-11)
+#endif
+#ifndef EAI_OVERFLOW
+#define EAI_OVERFLOW (-12)
+#endif
+#ifndef EOVERFLOW
+#define EOVERFLOW ERANGE
+#endif
+#ifndef ENOTSUP
+#ifdef EOPNOTSUPP
+#define ENOTSUP EOPNOTSUPP
+#else
+#define ENOTSUP EINVAL
+#endif
+#endif
+#ifndef EPROTO
+#define EPROTO EIO
+#endif
+#ifndef INET_ADDRSTRLEN
+#define INET_ADDRSTRLEN 16
+#endif
+#ifndef INET6_ADDRSTRLEN
+#define INET6_ADDRSTRLEN 46
+#endif
+#ifndef XO_ENCODERDIR
+#define XO_ENCODERDIR "/usr/lib/libxo/encoder"
 #endif
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+long long strsuftoll(const char *desc, const char *val, long long min, long long max);
+long long strsuftollx(const char *desc, const char *val, long long min, long long max, char *ebuf, size_t ebuflen);
+int getdtablecount(void);
+#if defined(__APPLE__) && !defined(pipe2)
+static __inline int fbsd_apple_pipe2(int pfd[2], int flags) {
+    if (pipe(pfd) != 0) return -1;
+#ifdef O_CLOEXEC
+    if (flags & O_CLOEXEC) {
+        (void)fcntl(pfd[0], F_SETFD, FD_CLOEXEC);
+        (void)fcntl(pfd[1], F_SETFD, FD_CLOEXEC);
+    }
+#endif
+#ifdef O_NONBLOCK
+    if (flags & O_NONBLOCK) {
+        int fl0 = fcntl(pfd[0], F_GETFL, 0);
+        int fl1 = fcntl(pfd[1], F_GETFL, 0);
+        if (fl0 >= 0) (void)fcntl(pfd[0], F_SETFL, fl0 | O_NONBLOCK);
+        if (fl1 >= 0) (void)fcntl(pfd[1], F_SETFL, fl1 | O_NONBLOCK);
+    }
+#endif
+    return 0;
+}
+#define pipe2 fbsd_apple_pipe2
+#endif
+#if defined(__DOS__) || defined(__WATCOMC__)
+int fbsd_dos_spawnvp(int mode, const char *file, const char * const *argv);
+int fbsd_dos_execl(const char *path, const char *arg0, ...);
+int fbsd_dos_execlp(const char *file, const char *arg0, ...);
+#undef _spawnvp
+#define _spawnvp(m, f, a) fbsd_dos_spawnvp((m), (f), (const char * const *)(a))
+#undef execl
+#define execl fbsd_dos_execl
+#undef execlp
+#define execlp fbsd_dos_execlp
+#ifndef sigblock
+#define sigblock(mask) (0)
+#endif
+#ifndef sigsetmask
+#define sigsetmask(mask) (0)
+#endif
+static __inline int fbsd_getw_compat(FILE *fp) {
+    int v = 0;
+    return fread(&v, sizeof(int), 1, fp) == 1 ? v : EOF;
+}
+static __inline int fbsd_putw_compat(int v, FILE *fp) {
+    return fwrite(&v, sizeof(int), 1, fp) == 1 ? 0 : EOF;
+}
+#ifndef getw
+#define getw fbsd_getw_compat
+#endif
+#ifndef putw
+#define putw fbsd_putw_compat
+#endif
+#ifndef getc_unlocked
+#define getc_unlocked(fp) getc(fp)
+#endif
+#ifndef putc_unlocked
+#define putc_unlocked(c, fp) putc((c), (fp))
+#endif
 #endif
 
 #ifndef sigmask
@@ -1685,8 +1920,11 @@ static __inline int fbsd_digittoint_compat(int c) {
 #define digittoint fbsd_digittoint_compat
 #endif
 static __inline int iswrune(wint_t wc) {
-    return (wc >= 0 && wc <= 0x10ffff);
+    return ((unsigned long)wc <= 0x10ffffUL);
 }
+#ifndef iscntrl_l
+#define iscntrl_l(c, loc) ((void)(loc), iscntrl((unsigned char)(c)))
+#endif
 static __inline int setlogin(const char *name) { (void)name; return 0; }
 static __inline int revoke(const char *path) { (void)path; return 0; }
 static const char *const fbsd_sys_signame_compat[32] = {
@@ -2048,11 +2286,17 @@ static __inline char *fbsd_getpass_compat(const char *prompt) {
 #define getpass fbsd_getpass_compat
 #endif
 static __inline int initgroups(const char *user, gid_t group) { (void)user; (void)group; return 0; }
-static __inline const char *hstrerror(int err) { (void)err; return "resolver error"; }
-static __inline void herror(const char *s) {
+#ifndef hstrerror
+static __inline const char *fbsd_hstrerror_compat(int err) { (void)err; return "resolver error"; }
+#define hstrerror fbsd_hstrerror_compat
+#endif
+#ifndef herror
+static __inline void fbsd_herror_compat(const char *s) {
     if (s && *s) fprintf(stderr, "%s: resolver error\n", s);
     else fprintf(stderr, "resolver error\n");
 }
+#define herror fbsd_herror_compat
+#endif
 static __inline int openpty(int *amaster, int *aslave, char *name, void *termp, void *winp) {
     (void)amaster; (void)aslave; (void)name; (void)termp; (void)winp;
     errno = ENOSYS;
@@ -2610,6 +2854,62 @@ struct xucred {
 #endif
 ]=])
 
+    file(WRITE "${ARG_INC_DIR}/sys/fcntl.h" [=[#if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && defined(__has_include_next)
+#if __has_include_next(<sys/fcntl.h>)
+#include_next <sys/fcntl.h>
+#define _FBSD_NATIVE_SYS_FCNTL_H 1
+#endif
+#endif
+#ifndef _FBSD_NATIVE_SYS_FCNTL_H
+#include <fcntl.h>
+#endif
+]=])
+
+    file(WRITE "${ARG_INC_DIR}/stdatomic.h" [=[#if !defined(_MSC_VER) && !defined(__WATCOMC__) && defined(__has_include_next)
+#if __has_include_next(<stdatomic.h>)
+#include_next <stdatomic.h>
+#define _FBSD_NATIVE_STDATOMIC_H 1
+#endif
+#endif
+#ifndef _FBSD_NATIVE_STDATOMIC_H
+#ifndef _FBSD_PORTABLE_STDATOMIC_H
+#define _FBSD_PORTABLE_STDATOMIC_H 1
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#ifndef _Atomic
+#define _Atomic(T) volatile T
+#endif
+typedef volatile bool atomic_bool;
+typedef volatile int atomic_int;
+typedef volatile unsigned int atomic_uint;
+typedef volatile long atomic_long;
+typedef volatile unsigned long atomic_ulong;
+typedef volatile size_t atomic_size_t;
+typedef struct { volatile int _flag; } atomic_flag;
+#define ATOMIC_FLAG_INIT { 0 }
+#define ATOMIC_VAR_INIT(v) (v)
+typedef enum {
+    memory_order_relaxed = 0,
+    memory_order_consume = 1,
+    memory_order_acquire = 2,
+    memory_order_release = 3,
+    memory_order_acq_rel = 4,
+    memory_order_seq_cst = 5
+} memory_order;
+static __inline void atomic_thread_fence(memory_order o) { (void)o; }
+static __inline void atomic_signal_fence(memory_order o) { (void)o; }
+#define atomic_init(obj, val) (*(obj) = (val))
+#define atomic_store(obj, val) (*(obj) = (val))
+#define atomic_store_explicit(obj, val, ord) ((void)(ord), *(obj) = (val))
+#define atomic_load(obj) (*(obj))
+#define atomic_load_explicit(obj, ord) ((void)(ord), *(obj))
+#define atomic_fetch_add(obj, arg) ((*(obj) += (arg)) - (arg))
+#define atomic_fetch_sub(obj, arg) ((*(obj) -= (arg)) + (arg))
+#endif
+#endif
+]=])
+
     file(WRITE "${ARG_INC_DIR}/sys/_types.h" [=[#if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && defined(__has_include_next)
 #if __has_include_next(<sys/_types.h>)
 #include_next <sys/_types.h>
@@ -2731,6 +3031,73 @@ function(freebsd_emit_libcompat_c)
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#if defined(__DOS__) || defined(__WATCOMC__)
+int fbsd_dos_spawnvp(int mode, const char *file, const char * const *argv) {
+    char cmd[1024];
+    size_t pos = 0;
+    int i;
+    (void)mode;
+    if (file == NULL || argv == NULL || argv[0] == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    cmd[0] = '\0';
+    for (i = 0; argv[i] != NULL; ++i) {
+        const char *a = (i == 0) ? file : argv[i];
+        size_t alen = strlen(a);
+        if (pos + alen + 4 >= sizeof(cmd)) break;
+        if (i > 0) cmd[pos++] = ' ';
+        memcpy(cmd + pos, a, alen);
+        pos += alen;
+        cmd[pos] = '\0';
+    }
+    return system(cmd);
+}
+int fbsd_dos_execl(const char *path, const char *arg0, ...) {
+    const char *args[64];
+    va_list ap;
+    int n = 0;
+    int rc;
+    if (path == NULL || arg0 == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    args[n++] = arg0;
+    va_start(ap, arg0);
+    while (n < 63) {
+        const char *p = va_arg(ap, const char *);
+        args[n++] = p;
+        if (p == NULL) break;
+    }
+    args[63] = NULL;
+    va_end(ap);
+    rc = fbsd_dos_spawnvp(0, path, args);
+    if (rc >= 0) exit(rc);
+    return -1;
+}
+int fbsd_dos_execlp(const char *file, const char *arg0, ...) {
+    const char *args[64];
+    va_list ap;
+    int n = 0;
+    int rc;
+    if (file == NULL || arg0 == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    args[n++] = arg0;
+    va_start(ap, arg0);
+    while (n < 63) {
+        const char *p = va_arg(ap, const char *);
+        args[n++] = p;
+        if (p == NULL) break;
+    }
+    args[63] = NULL;
+    va_end(ap);
+    rc = fbsd_dos_spawnvp(0, file, args);
+    if (rc >= 0) exit(rc);
+    return -1;
+}
+#endif
 #include <libxo/xo.h>
 
 #if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)

@@ -61,7 +61,7 @@ def test_render_per_binary_cmakelists_variants_and_errors(tmp_path: Path) -> Non
         lex_sources=(str(rich_l),),
         generated_headers=("y.tab.h",),
         include_dirs=(str(tmp_path),),
-        compile_defs=("BSD_AR=1", "MAGIC='\"/usr/share/misc/magic\"'"),
+        compile_defs=("BSD_AR=1", "MAGIC='\"/usr/share/misc/magic\"'", r"RAW\ESC"),
         raw_libs=("archive", "elftc"),
         section3_targets=("fbsd_libarchive", "fbsd_libelftc"),
         links=("ranlib",),
@@ -75,6 +75,7 @@ def test_render_per_binary_cmakelists_variants_and_errors(tmp_path: Path) -> Non
     assert "TARGET_RUNTIME_DLLS" in text
     assert "ranlib${CMAKE_EXECUTABLE_SUFFIX}" in text
     assert "BSD_AR=1" in text
+    assert "fbsd_strdefs_ar.h" in text
 
     # Also cover yacc-only (no lex) and lex-only (no yacc) branches
     yacc_only = BinarySpec(

@@ -236,6 +236,33 @@ def test_emit_all_codegen_helpers_full_and_minimal(tmp_path: Path) -> None:
         f"#define HAVE_SSL 1{LF}#define random(x) rand(x){LF}",
         encoding="utf-8",
     )
+    (ldns_dir / "error.h").write_text(
+        f"extern ldns_lookup_table ldns_error_str[];{LF}",
+        encoding="utf-8",
+    )
+
+    (fetch_dir / "fetch.h").write_text(
+        f"extern int fetchLastErrCode;{LF}",
+        encoding="utf-8",
+    )
+
+    nbsd_dir = full_src / "lib" / "libnetbsd"
+    nbsd_dir.mkdir(parents=True)
+    (nbsd_dir / "efun.h").write_text(f"void *emalloc(size_t);{LF}", encoding="utf-8")
+
+    obsd_dir = full_src / "lib" / "libopenbsd"
+    obsd_dir.mkdir(parents=True)
+    (obsd_dir / "ohash.h").write_text(f"struct ohash;{LF}", encoding="utf-8")
+
+    lzma_common = full_src / "contrib" / "xz" / "src" / "liblzma" / "common"
+    lzma_common.mkdir(parents=True)
+    (lzma_common / "common.h").write_text(
+        (
+            f"#define LZMA_NEXT_CODER_INIT \\{LF}"
+            f"\t(lzma_next_coder){{ \\{LF}\t\t.coder = NULL \\{LF}\t}}{LF}"
+        ),
+        encoding="utf-8",
+    )
 
     iconv_dir = full_src / "lib" / "libc" / "iconv"
     iconv_dir.mkdir(parents=True)
@@ -244,6 +271,18 @@ def test_emit_all_codegen_helpers_full_and_minimal(tmp_path: Path) -> None:
     full_emitted = emit_all_codegen_helpers(full_src, tmp_path / "full_gen")
     assert "codegen/libfetch/ftperr.h" in full_emitted
     assert "codegen/libfetch/httperr.h" in full_emitted
+    assert "codegen/libfetch/fetch.h" in full_emitted
+    assert "_FBSD_FETCH_DATA" in full_emitted["codegen/libfetch/fetch.h"].read_text(
+        encoding="utf-8"
+    )
+    assert "_FBSD_LDNS_DATA" in full_emitted["codegen/ldns/ldns/error.h"].read_text(
+        encoding="utf-8"
+    )
+    assert "codegen/libnetbsd/efun.h" in full_emitted
+    assert "codegen/libopenbsd/ohash.h" in full_emitted
+    assert "_fbsd_clit_LZMA_NEXT_CODER_INIT" in full_emitted["codegen/liblzma/common.h"].read_text(
+        encoding="utf-8"
+    )
     assert "codegen/vi/options_def.h" in full_emitted
     assert "codegen/vi/config.h" in full_emitted
     assert "codegen/ncurses/termsort.h" in full_emitted

@@ -530,8 +530,17 @@
  	}
 --- a/usr.bin/localedef/bootstrap/limits.h
 +++ b/usr.bin/localedef/bootstrap/limits.h
-@@ -36,7 +36,7 @@
+@@ -33,10 +33,16 @@
+  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  * SUCH DAMAGE.
+  */
++#if defined(_MSC_VER)
++#include <../include/limits.h>
++#elif defined(__WATCOMC__)
++#include <../h/limits.h>
++#else
  #include_next <limits.h>
++#endif
  
  #ifndef COLL_WEIGHTS_MAX
 -#error "COLL_WEIGHTS_MAX missing"
@@ -612,7 +621,21 @@
  }
 --- a/usr.sbin/ypserv/common/yplib_host.c
 +++ b/usr.sbin/ypserv/common/yplib_host.c
-@@ -71,7 +71,9 @@
+@@ -53,8 +53,11 @@
+ 
+ extern bool_t xdr_ypresp_all_seq(XDR *, unsigned long *);
+ 
+-extern int (*ypresp_allfn)(u_long, char *, int, char *, int, void *);
+-extern void *ypresp_data;
++#ifndef _FBSD_SYS_DATA
++#define _FBSD_SYS_DATA extern
++#endif
++_FBSD_SYS_DATA int (*ypresp_allfn)(u_long, char *, int, char *, int, void *);
++_FBSD_SYS_DATA void *ypresp_data;
+ 
+ static int _yplib_host_timeout = 10;
+ 
+@@ -71,7 +74,9 @@
  	int rsrv_sock;
  
  	memset(&rsrv_sin, 0, sizeof rsrv_sin);
@@ -622,7 +645,7 @@
  	rsrv_sin.sin_family = AF_INET;
  	rsrv_sock = RPC_ANYSOCK;
  	if (port != 0)
-@@ -118,7 +120,9 @@
+@@ -118,7 +123,9 @@
  	int rsrv_sock;
  
  	memset(&rsrv_sin, 0, sizeof rsrv_sin);
@@ -632,6 +655,111 @@
  	rsrv_sin.sin_family = AF_INET;
  	rsrv_sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
  	rsrv_sock = RPC_ANYSOCK;
+--- a/contrib/elftoolchain/libelf/libelf_align.c
++++ b/contrib/elftoolchain/libelf/libelf_align.c
+@@ -38,7 +38,14 @@
+ 	unsigned int a64;
+ };
+ 
+-#ifdef	__GNUC__
++#if defined(__GNUC__) || defined(_MSC_VER) || defined(__WATCOMC__)
++#ifndef __alignof__
++#ifdef _MSC_VER
++#define __alignof__(t) __alignof(t)
++#else
++#define __alignof__(t) offsetof(struct { char _c; t _x; }, _x)
++#endif
++#endif
+ #define	MALIGN(N)	{					\
+ 		.a32 = __alignof__(Elf32_##N),			\
+ 		.a64 = __alignof__(Elf64_##N)			\
+--- a/lib/libnetbsd/stdlib.h
++++ b/lib/libnetbsd/stdlib.h
+@@ -60,12 +60,22 @@
+  */
+ 
+ #ifndef _LIBNETBSD_STDLIB_H_
+-#define _LIBNETBSD_STDLIB_H_
+ 
++#if defined(_MSC_VER)
++#define _LIBNETBSD_STDLIB_H_
++#include <../ucrt/stdlib.h>
++#elif defined(__WATCOMC__)
++#define _LIBNETBSD_STDLIB_H_
++#include <../h/stdlib.h>
++#else
+ #include_next <stdlib.h>
++#endif
++#ifndef _LIBNETBSD_STDLIB_H_
++#define _LIBNETBSD_STDLIB_H_
+ 
+ long long strsuftoll(const char *, const char *, long long, long long);
+ long long strsuftollx(const char *, const char *,
+     long long, long long, char *, size_t);
+ 
+ #endif /* _LIBNETBSD_STDLIB_H_ */
++#endif
+--- a/lib/libopenbsd/unistd.h
++++ b/lib/libopenbsd/unistd.h
+@@ -25,10 +25,17 @@
+  */
+ 
+ #ifndef _LIBOPENBSD_UNISTD_H_
+-#define _LIBOPENBSD_UNISTD_H_
++#if defined(_MSC_VER) || defined(__WATCOMC__)
++#define _LIBOPENBSD_UNISTD_H_
++#include "posix-unistd.h"
++#else
+ 
+ #include_next <unistd.h>
++#endif
++#ifndef _LIBOPENBSD_UNISTD_H_
++#define _LIBOPENBSD_UNISTD_H_
+ 
+ int	 getdtablecount(void);
+ 
+ #endif
++#endif
+--- a/usr.bin/random/randomize_fd.h
++++ b/usr.bin/random/randomize_fd.h
+@@ -47,7 +47,7 @@
+ random_unit_float(void)
+ {
+ 	static const uint64_t denom = (1ull << 53);
+-	static const uint64_t mask = denom - 1;
++	static const uint64_t mask = (1ull << 53) - 1;
+ 
+ 	uint64_t rand64;
+ 
+--- a/usr.bin/yacc/config.h
++++ b/usr.bin/yacc/config.h
+@@ -1,22 +1,26 @@
+ /* config.h.  Generated automatically by configure.  */
+ /* config_h.in.  Generated automatically from configure.in by autoheader.  */
+ 
++#ifdef __GNUC__
+ /* Define to noreturn-attribute for gcc */
+ #define GCC_NORETURN __attribute__((noreturn))
+ 
+ /* Define to 1 if the compiler supports gcc-like printf attribute. */
+ #define GCC_PRINTF 1
+ 
+ /* Define to printf-attribute for gcc */
+ #define GCC_PRINTFLIKE(fmt,var) __attribute__((format(printf,fmt,var)))
+ 
+ /* Define to 1 if the compiler supports gcc-like scanf attribute. */
+ #define GCC_SCANF 1
+ 
+ /* Define to sscanf-attribute for gcc */
+ #define GCC_SCANFLIKE(fmt,var) __attribute__((format(scanf,fmt,var)))
+ 
+ /* Define to unused-attribute for gcc */
+ #define GCC_UNUSED __attribute__((unused))
++#else
++#define GCC_UNUSED
++#endif
+ 
+ /* Define if you have the <fcntl.h> header file. */
 --- a/usr.bin/locale/locale.c
 +++ b/usr.bin/locale/locale.c
 @@ -711,6 +711,7 @@
