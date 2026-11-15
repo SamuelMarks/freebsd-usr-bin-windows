@@ -2016,3 +2016,131 @@ def emit_vacation_sources(out_dir: Path) -> dict[str, Path]:
         dst.write_text(txt, encoding="utf-8")
         emitted[fname] = dst
     return emitted
+
+
+AWK_PROC_ENTRY_RE = re.compile(r"\{\s*([A-Z][A-Z0-9_]*)\s*,\s*\"([A-Za-z_][A-Za-z0-9_]*)\"")
+AWK_TAB_DEFINE_RE = re.compile(r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(-?\d+)\b")
+AWK_TAB_ENUM_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(-?\d+)\s*,?")
+
+
+def generate_awk_proctab_c(awkgram_tab_h: Path, maketab_c: Path) -> str:
+    """Generate ``proctab.c`` for ``one-true-awk`` from ``awkgram.tab.h`` and ``maketab.c``.
+
+    Replicates ``contrib/one-true-awk/maketab.c`` in pure Python so native
+    Windows (``CMAKE_HOST_WIN32``) and cross-architecture builds (``ARM64``,
+    ``X86``) never need to compile and execute a host ``maketab`` C binary.
+
+    Args:
+        awkgram_tab_h: Path to Yacc/Bison generated ``awkgram.tab.h``.
+        maketab_c: Path to upstream ``contrib/one-true-awk/maketab.c``.
+
+    Returns:
+        Generated C source text for ``proctab.c``.
+
+    Raises:
+        FreeBsdPortError: If ``awkgram_tab_h`` or ``maketab_c`` is missing or
+            lacks ``FIRSTTOKEN`` / ``LASTTOKEN`` definitions.
+    """
+    if not awkgram_tab_h.is_file():
+        raise FreeBsdPortError(
+            ErrorCode.SOURCE_TREE_NOT_FOUND,
+            "awkgram.tab.h not found for proctab.c generation",
+            path=awkgram_tab_h,
+        )
+    if not maketab_c.is_file():
+        raise FreeBsdPortError(
+            ErrorCode.SOURCE_TREE_NOT_FOUND,
+            "maketab.c not found for proctab.c generation",
+            path=maketab_c,
+        )
+
+    raw_tokens: list[tuple[str, int]] = []
+    for line in awkgram_tab_h.read_text(encoding="utf-8", errors="ignore").splitlines():
+        dm = AWK_TAB_DEFINE_RE.match(line)
+        if dm is not None:
+            name, val = dm.group(1), int(dm.group(2))
+        else:
+            em = AWK_TAB_ENUM_RE.match(line)
+            if em is None:
+                continue
+            name, val = em.group(1), int(em.group(2))
+        if name == "YYSTYPE_IS_DECLARED":
+            continue
+        raw_tokens.append((name, val))
+
+    token_by_name = {name: val for name, val in raw_tokens}
+    if "FIRSTTOKEN" not in token_by_name or "LASTTOKEN" not in token_by_name:
+        raise FreeBsdPortError(
+            ErrorCode.CODEGEN_FAILURE,
+            "awkgram.tab.h missing FIRSTTOKEN/LASTTOKEN definitions",
+            path=awkgram_tab_h,
+        )
+
+    first_tok = token_by_name["FIRSTTOKEN"]
+    last_tok = token_by_name["LASTTOKEN"]
+    size = last_tok - first_tok + 1
+
+    names: list[str] = [""] * size
+    print_entries: list[str] = []
+    seen_tok_nums: set[int] = set()
+    for name, tok in raw_tokens:
+        if tok < first_tok or tok > last_tok or tok in seen_tok_nums:
+            continue
+        seen_tok_nums.add(tok)
+        names[tok - first_tok] = name
+        print_entries.append(f'{TAB}"{name}",{TAB}/* {tok} */')
+
+    proc_map: dict[str, str] = {}
+    for pm in AWK_PROC_ENTRY_RE.finditer(maketab_c.read_text(encoding="utf-8", errors="ignore")):
+        proc_map[pm.group(1)] = pm.group(2)
+
+    table: list[str] = ["nullproc"] * size
+    for sym_name, fn_name in proc_map.items():
+        tok_val = token_by_name.get(sym_name)
+        if tok_val is not None and first_tok <= tok_val <= last_tok:
+            table[tok_val - first_tok] = fn_name
+
+    out_lines = [
+        "#include <stdio.h>",
+        '#include "awk.h"',
+        '#include "awkgram.tab.h"',
+        "",
+        f"static const char * const printname[{size}] = {{",
+        *print_entries,
+        "};",
+        "",
+        "",
+        f"Cell *(*proctab[{size}])(Node **, int) = {{",
+        *[f"{TAB}{table[idx]},{TAB}/* {names[idx]} */" for idx in range(size)],
+        "};",
+        "",
+        "const char *tokname(int n)",
+        "{",
+        f"{TAB}static char buf[100];",
+        "",
+        f"{TAB}if (n < FIRSTTOKEN || n > LASTTOKEN) {{",
+        f'{TAB}{TAB}snprintf(buf, sizeof(buf), "token %d", n);',
+        f"{TAB}{TAB}return buf;",
+        f"{TAB}}}",
+        f"{TAB}return printname[n-FIRSTTOKEN];",
+        "}",
+        "",
+    ]
+    return LF.join(out_lines)
+
+
+def emit_awk_proctab_c(awkgram_tab_h: Path, maketab_c: Path, out_proctab_c: Path) -> Path:
+    """Write ``proctab.c`` generated from ``awkgram.tab.h`` and ``maketab.c`` to disk.
+
+    Args:
+        awkgram_tab_h: Path to Yacc/Bison generated ``awkgram.tab.h``.
+        maketab_c: Path to upstream ``contrib/one-true-awk/maketab.c``.
+        out_proctab_c: Destination ``proctab.c`` path.
+
+    Returns:
+        Resolved path to written ``proctab.c``.
+    """
+    dst = out_proctab_c.resolve()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(generate_awk_proctab_c(awkgram_tab_h, maketab_c), encoding="utf-8")
+    return dst

@@ -103,6 +103,7 @@ def render_per_binary_cmakelists(
             f'set(FREEBSD_REPO_ROOT "{repo_posix}" CACHE PATH "freebsd-usr-bin-windows root")',
             f'set(FREEBSD_SRC_DIR "{fbsd_posix}" CACHE PATH "Upstream freebsd-src root")',
             f'set(FREEBSD_GEN_DIR "{gen_posix}" CACHE PATH "Generated FreeBSD artifacts dir")',
+            f'set(FREEBSD_GEN_INC "{gen_inc_posix}" CACHE PATH "Generated FreeBSD include dir")',
             "",
             "if(_FBSD_STANDALONE_BINARY)",
             '    option(FREEBSD_USE_AUTO_WIN_MSVC "Link auto-win-msvc polyfill library" ON)',
@@ -116,6 +117,7 @@ def render_per_binary_cmakelists(
             "    endif()",
             "    if(FREEBSD_USE_AUTO_WIN_MSVC)",
             "        include(FetchContent)",
+            '        set(BUILD_TESTING OFF CACHE BOOL "" FORCE)',
             '        set(AUTO_WIN_MSVC_BUILD_TESTING OFF CACHE BOOL "" FORCE)',
             '        set(_LOCAL_AWM "${FREEBSD_REPO_ROOT}/../auto-win-msvc")',
             (

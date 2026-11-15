@@ -1149,15 +1149,16 @@ static __inline int ether_ntohost(char *hostname, const void *e) {
 #if defined(__APPLE__)
 static __inline void setproctitle(const char *fmt, ...) { (void)fmt; }
 #endif
-#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
+#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__) || defined(__linux__)
+#if defined(__linux__) && __has_include(<resolv.h>)
+#include <resolv.h>
+#endif
 int fbsd_b64_ntop(const unsigned char *src, size_t srclength, char *target, size_t targsize);
 int fbsd_b64_pton(const char *src, unsigned char *target, size_t targsize);
-#ifndef b64_ntop
+#undef b64_ntop
 #define b64_ntop fbsd_b64_ntop
-#endif
-#ifndef b64_pton
+#undef b64_pton
 #define b64_pton fbsd_b64_pton
-#endif
 #endif
 static __inline int getosreldate(void) { return 1500000; }
 #if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)
@@ -1372,7 +1373,7 @@ struct ip6_rthdr {
 #define logout telnet_logout
 #endif
 #ifdef FBSD_NVI_BUILD
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 int openpty(int *amaster, int *aslave, char *name, void *termp, void *winp);
 int login_tty(int fd);
 #endif

@@ -183,24 +183,18 @@ function(freebsd_compile_yacc_lex)
             list(APPEND _YACC_HDRS "${_OUT_H}")
 
             if(_YSTEM STREQUAL "awkgram" AND EXISTS "${FREEBSD_MAKETAB_SRC}")
-                get_filename_component(_AWK_SRC_DIR "${FREEBSD_MAKETAB_SRC}" DIRECTORY)
-                freebsd_detect_host_cc(OUT_VAR _MT_CC)
+                get_filename_component(_FBSD_BOOT_REPO_ROOT "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/.." REALPATH)
+                find_program(_FBSD_BOOT_PY3 NAMES "${Python3_EXECUTABLE}" python3 python)
                 set(_PROCTAB_C "${ARG_OUT_DIR}/proctab.c")
-                if(_MT_CC AND NOT CMAKE_HOST_WIN32)
-                    set(_MT_BIN "${ARG_OUT_DIR}/host_maketab${CMAKE_HOST_EXECUTABLE_SUFFIX}")
-                    set(_MT_SCRIPT "${ARG_OUT_DIR}/run_maketab.cmake")
-                    file(WRITE "${_MT_SCRIPT}" [=[execute_process(
-    COMMAND "${MT_BIN}" "${OUT_H}"
-    OUTPUT_FILE "${PROCTAB_C}"
-    COMMAND_ERROR_IS_FATAL ANY
-)
-]=])
+                if(_FBSD_BOOT_PY3)
                     add_custom_command(
                         OUTPUT "${_PROCTAB_C}"
-                        COMMAND "${_MT_CC}" -O2 "-I${ARG_OUT_DIR}" "-I${_AWK_SRC_DIR}" "${FREEBSD_MAKETAB_SRC}" -o "${_MT_BIN}"
-                        COMMAND "${CMAKE_COMMAND}" "-DMT_BIN=${_MT_BIN}" "-DOUT_H=${_OUT_H}" "-DPROCTAB_C=${_PROCTAB_C}" -P "${_MT_SCRIPT}"
+                        COMMAND "${_FBSD_BOOT_PY3}" -c
+                            "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from scripts.codegen_helpers import emit_awk_proctab_c; emit_awk_proctab_c(Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))"
+                            "${_FBSD_BOOT_REPO_ROOT}" "${_OUT_H}" "${FREEBSD_MAKETAB_SRC}" "${_PROCTAB_C}"
                         DEPENDS "${_OUT_H}" "${FREEBSD_MAKETAB_SRC}"
-                        COMMENT "Generating awk proctab.c via host_maketab"
+                        COMMENT "Generating awk proctab.c via emit_awk_proctab_c"
+                        VERBATIM
                     )
                     list(APPEND _GEN_SRCS "${_PROCTAB_C}")
                 endif()

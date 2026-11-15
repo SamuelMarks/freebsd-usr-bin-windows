@@ -72,6 +72,8 @@ def test_render_per_binary_cmakelists_variants_and_errors(tmp_path: Path) -> Non
     assert "LANGUAGES C CXX" in text
     assert "freebsd_compile_yacc_lex(" in text
     assert 'set(FREEBSD_REQUIRED_SECTION3_LIBS "fbsd_libarchive;fbsd_libelftc")' in text
+    assert 'set(FREEBSD_GEN_INC "' in text
+    assert 'set(BUILD_TESTING OFF CACHE BOOL "" FORCE)' in text
     assert "TARGET_RUNTIME_DLLS" in text
     assert "ranlib${CMAKE_EXECUTABLE_SUFFIX}" in text
     assert "BSD_AR=1" in text

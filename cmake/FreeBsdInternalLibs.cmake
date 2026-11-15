@@ -44,6 +44,9 @@ else()
     set(_FBSD_GEN_BASE "${CMAKE_BINARY_DIR}/freebsd_generated")
     set(_FBSD_CODEGEN_DIR "${_FBSD_GEN_BASE}/codegen")
 endif()
+if(NOT DEFINED FREEBSD_GEN_INC)
+    set(FREEBSD_GEN_INC "${_FBSD_GEN_BASE}/include")
+endif()
 
 get_filename_component(_FBSD_INTERNAL_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." REALPATH)
 if(NOT EXISTS "${_FBSD_CODEGEN_DIR}/ncurses/fbsd_curses.c" AND DEFINED FREEBSD_SRC_DIR AND EXISTS "${FREEBSD_SRC_DIR}")
@@ -207,6 +210,9 @@ EXPORTS
     endif()
 
     add_library(${_TARGET} ${_LIB_TYPE} ${_ACTIVE_S3_SRCS})
+    if(MINGW AND _LIB_TYPE STREQUAL "SHARED")
+        target_link_options(${_TARGET} PRIVATE "-Wl,--export-all-symbols")
+    endif()
     set_target_properties(${_TARGET} PROPERTIES
         OUTPUT_NAME "${ARG_OUTPUT_NAME}"
         WINDOWS_EXPORT_ALL_SYMBOLS ON

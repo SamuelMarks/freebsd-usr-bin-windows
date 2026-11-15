@@ -14,6 +14,8 @@ from scripts.codegen_helpers import (
     LF,
     _find_m4_binary,
     emit_all_codegen_helpers,
+    emit_awk_proctab_c,
+    generate_awk_proctab_c,
     generate_contrib_config_header,
     generate_elftc_artifacts,
     generate_libfetch_errlist_h,
@@ -316,3 +318,74 @@ def test_find_m4_binary_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     assert _find_m4_binary() in (None, "C:/Program Files/Git/usr/bin/m4.exe")
+
+
+def test_generate_and_emit_awk_proctab_c(tmp_path: Path) -> None:
+    """Verify pure-Python ``awk`` ``proctab.c`` generation for Bison/Yacc headers and errors.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+    """
+    missing_tab = tmp_path / "missing_tab.h"
+    maketab_c = tmp_path / "maketab.c"
+    with pytest.raises(FreeBsdPortError) as exc_tab:
+        generate_awk_proctab_c(missing_tab, maketab_c)
+    assert exc_tab.value.code is ErrorCode.SOURCE_TREE_NOT_FOUND
+
+    incomplete_tab = tmp_path / "incomplete.tab.h"
+    incomplete_tab.write_text(f"#define ONLY_ONE 258{LF}", encoding="utf-8")
+    with pytest.raises(FreeBsdPortError) as exc_mt:
+        generate_awk_proctab_c(incomplete_tab, maketab_c)
+    assert exc_mt.value.code is ErrorCode.SOURCE_TREE_NOT_FOUND
+
+    maketab_c.write_text(
+        LF.join(
+            [
+                "struct xx { int token; const char *name; const char *pname; } proc[] = {",
+                '    { PROGRAM, "program", NULL },',
+                '    { PRINT, "printstat", "print" },',
+                '    { UNUSED_TOK, "unusedfn", NULL },',
+                '    { LOW_TOK, "lowfn", NULL },',
+                '    { 0, "", "" },',
+                "};",
+            ]
+        )
+        + LF,
+        encoding="utf-8",
+    )
+    with pytest.raises(FreeBsdPortError) as exc_bounds:
+        generate_awk_proctab_c(incomplete_tab, maketab_c)
+    assert exc_bounds.value.code is ErrorCode.CODEGEN_FAILURE
+
+    awkgram_tab = tmp_path / "awkgram.tab.h"
+    awkgram_tab.write_text(
+        LF.join(
+            [
+                "/* bison header */",
+                "#define YYSTYPE_IS_DECLARED 1",
+                "#define LOW_TOK 100",
+                "enum yytokentype {",
+                "    FIRSTTOKEN = 257,",
+                "    PROGRAM = 258,",
+                "    PRINT = 260,",
+                "    LASTTOKEN = 260,",
+                "    HIGH_TOK = 999,",
+                "};",
+                "#define FIRSTTOKEN 257",
+                "#define PROGRAM 258",
+                "#define PRINT 260",
+                "#define LASTTOKEN 260",
+            ]
+        )
+        + LF,
+        encoding="utf-8",
+    )
+
+    out_c = emit_awk_proctab_c(awkgram_tab, maketab_c, tmp_path / "sub" / "proctab.c")
+    rendered = out_c.read_text(encoding="utf-8")
+    assert "static const char * const printname[4]" in rendered
+    assert "Cell *(*proctab[4])(Node **, int)" in rendered
+    assert "program,\t/* PROGRAM */" in rendered
+    assert "nullproc,\t/*  */" in rendered
+    assert "printstat,\t/* PRINT */" in rendered
+    assert "const char *tokname(int n)" in rendered

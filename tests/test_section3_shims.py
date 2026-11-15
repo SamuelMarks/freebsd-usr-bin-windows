@@ -40,6 +40,9 @@ def test_emit_all_section3_shims_and_compile(tmp_path: Path) -> None:
     sys_files = emit_libsys_section3_sources(tmp_path / "libsys")
     assert "security/pam_appl.h" in sys_files
     assert "rpcsvc/ypclnt.h" in sys_files
+    assert "_FBSD_SYS_DATA void *ypresp_data;" in sys_files["rpcsvc/ypclnt.h"].read_text(
+        encoding="utf-8"
+    )
     assert "sys/nv.h" in sys_files
     assert "fbsd_sys.c" in sys_files
 

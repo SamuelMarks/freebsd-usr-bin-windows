@@ -2208,6 +2208,11 @@ def emit_libsys_section3_sources(out_dir: Path) -> dict[str, Path]:
                 "int yp_maplist(const char *indomain, struct ypmaplist **outmaplist);",
                 "const char *yperr_string(int incode);",
                 "int ypprot_err(unsigned int incode);",
+                (
+                    "_FBSD_SYS_DATA int (*ypresp_allfn)"
+                    "(unsigned long, char *, int, char *, int, void *);"
+                ),
+                "_FBSD_SYS_DATA void *ypresp_data;",
                 "#ifdef __cplusplus",
                 "}",
                 "#endif",
@@ -2372,7 +2377,7 @@ def emit_libsys_section3_sources(out_dir: Path) -> dict[str, Path]:
                 "",
                 "int openpam_debug = 0;",
                 "int openpam_ttyconv_timeout = 0;",
-                "void *ypresp_allfn = NULL;",
+                "int (*ypresp_allfn)(unsigned long, char *, int, char *, int, void *) = NULL;",
                 "void *ypresp_data = NULL;",
                 "const char *pam_item_name[PAM_NUM_ITEMS] = {",
                 '    "NONE", "PAM_SERVICE", "PAM_USER", "PAM_TTY", "PAM_RHOST",',
