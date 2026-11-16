@@ -26,6 +26,10 @@ CRLF: str = f"{CR}{LF}"
 HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 FREEBSD_VERSION_RE = re.compile(r"^\s*#\s*define\s+__FreeBSD_version\s+(\d+)", re.MULTILINE)
 PATCH_VERSION_DIR_RE = re.compile(r"^freebsd(\d+)$")
+PATCHED_HEADER_SUFFIXES: frozenset[str] = frozenset({".h", ".hh", ".hpp"})
+STAGED_SIBLING_SUFFIXES: frozenset[str] = frozenset(
+    {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
+)
 
 GIT_REPO_ENV_VARS: frozenset[str] = frozenset(
     {
@@ -380,6 +384,7 @@ def stage_patched_sources(
 
     major = detect_freebsd_major(src_root)
     staged_map: dict[Path, Path] = {}
+    patched_header_dirs: set[Path] = set()
     for patch_file in sorted(patches_dir.rglob("*.patch")):
         rel_dirs = patch_file.relative_to(patches_dir).parts[:-1]
         ver_tags = [
@@ -408,6 +413,21 @@ def stage_patched_sources(
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             dest_path.write_text(patched_text, encoding="utf-8", errors="surrogateescape")
             staged_map[orig_path] = dest_path
+            if orig_path.suffix in PATCHED_HEADER_SUFFIXES:
+                patched_header_dirs.add(orig_path.parent)
+
+    for hdr_dir in sorted(patched_header_dirs):
+        dest_dir = (staged_dir / hdr_dir.relative_to(src_root)).resolve()
+        for sib in sorted(hdr_dir.iterdir()):
+            sib_resolved = sib.resolve()
+            if (
+                sib.is_file()
+                and sib.suffix in STAGED_SIBLING_SUFFIXES
+                and sib_resolved not in staged_map
+            ):
+                dest_sib = (dest_dir / sib.name).resolve()
+                dest_sib.write_bytes(sib_resolved.read_bytes())
+                staged_map[sib_resolved] = dest_sib
 
     return staged_map
 

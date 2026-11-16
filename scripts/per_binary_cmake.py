@@ -280,6 +280,7 @@ def render_per_binary_cmakelists(
             "    $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS>",
             "    $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_DEPRECATE>",
             "    $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_WARNINGS>",
+            "    $<$<BOOL:${MSVC}>:_CRT_STDIO_ISO_WIDE_SPECIFIERS=1>",
             "    $<$<BOOL:${WIN32}>:WIN32_LEAN_AND_MEAN>",
             "    $<$<BOOL:${WIN32}>:NOMINMAX>",
             ")",
@@ -366,7 +367,9 @@ def render_per_binary_cmakelists(
             "elseif(MSVC)",
             (
                 "    target_compile_options(${_FBSD_TARGET} PRIVATE "
-                '"/wd4005" "/wd4244" "/wd4267" "/wd4996")'
+                '"$<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>" '
+                + ('"$<$<COMPILE_LANGUAGE:C>:/Zc:__STDC__>" ' if spec.prog == "vacation" else "")
+                + '"/wd4005" "/wd4244" "/wd4267" "/wd4996")'
             ),
             '    target_link_options(${_FBSD_TARGET} PRIVATE "/STACK:8388608")',
             "else()",

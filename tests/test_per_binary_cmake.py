@@ -116,6 +116,27 @@ def test_render_per_binary_cmakelists_variants_and_errors(tmp_path: Path) -> Non
     l_txt = render_per_binary_cmakelists(lex_only, tmp_path, tmp_path, tmp_path / "gen")
     assert "YACC_SOURCES" in y_txt and "LEX_SOURCES" not in y_txt
     assert "LEX_SOURCES" in l_txt and "YACC_SOURCES" not in l_txt
+    assert "/Zc:__cplusplus" in y_txt
+    assert "/Zc:__STDC__" not in y_txt
+
+    vac_spec = BinarySpec(
+        prog="vacation",
+        subdir="vacation",
+        tier=1,
+        is_cxx=False,
+        sources=(str(rich_c),),
+        yacc_sources=(),
+        lex_sources=(),
+        generated_headers=(),
+        include_dirs=(),
+        compile_defs=(),
+        raw_libs=(),
+        section3_targets=(),
+        links=(),
+        scripts=(),
+    )
+    vac_txt = render_per_binary_cmakelists(vac_spec, tmp_path, tmp_path, tmp_path / "gen")
+    assert "/Zc:__STDC__" in vac_txt
 
 
 def test_standalone_per_binary_cmake_configure_build_and_ctest(tmp_path: Path) -> None:

@@ -829,3 +829,251 @@
  				p = fn;
  		} else if (!isaddr && nflag > 1) {
  			/*
+--- a/usr.bin/dtc/input_buffer.cc
++++ b/usr.bin/dtc/input_buffer.cc
+@@ -1182,7 +1182,9 @@
+ 		{
+ 			default:
+ 				return false;
+-			case 'a'...'z': case 'A'...'Z': case '0'...'9':
++			case 'a'...'z':
++			case 'A'...'Z':
++			case '0'...'9':
+ 			case ',': case '.': case '+': case '-':
+ 			case '_':
+ 				return true;
+@@ -1201,7 +1203,9 @@
+ 		{
+ 			default:
+ 				return false;
+-			case 'a'...'z': case 'A'...'Z': case '0'...'9':
++			case 'a'...'z':
++			case 'A'...'Z':
++			case '0'...'9':
+ 			case ',': case '.': case '+': case '-':
+ 			case '_': case '#':
+ 				return true;
+--- a/usr.bin/localedef/bootstrap/ctype.h
++++ b/usr.bin/localedef/bootstrap/ctype.h
+@@ -35,7 +35,13 @@
+  */
+ #pragma once
+ #include <sys/cdefs.h>
++#if defined(_MSC_VER)
++#include <../ucrt/ctype.h>
++#elif defined(__WATCOMC__)
++#include <../h/ctype.h>
++#else
+ #include_next <ctype.h>
++#endif
+ 
+ /*
+  * On macOS isxdigit(), etc are defined in _ctype.h, but we have to include the
+--- a/usr.bin/mkimg/uuid.c
++++ b/usr.bin/mkimg/uuid.c
+@@ -44,7 +44,7 @@
+ }
+ #endif	/* __APPLE__ */
+ 
+-#if defined(__linux__) || defined(__FreeBSD__)
++#if !defined(__APPLE__)
+ #include <sys/time.h>
+ #include <stdlib.h>
+ 
+--- a/usr.bin/sort/coll.h
++++ b/usr.bin/sort/coll.h
+@@ -111,7 +111,11 @@
+  */
+ struct keys_array
+ {
++#if defined(_MSC_VER) || defined(__WATCOMC__)
++	char			 key[1];
++#else
+ 	struct key_value	 key[0];
++#endif
+ };
+ 
+ /*
+--- a/contrib/wireguard-tools/encoding.c
++++ b/contrib/wireguard-tools/encoding.c
+@@ -119,6 +119,8 @@
+ 
+ 	for (unsigned int i = 0; i < WG_KEY_LEN; ++i) {
+ 		acc |= key[i];
++#if defined(__GNUC__) || defined(__clang__)
+ 		asm volatile("" : "=r"(acc) : "0"(acc));
++#endif
+ 	}
+ 	return 1 & ((acc - 1) >> 8);
+--- a/contrib/wireguard-tools/curve25519.c
++++ b/contrib/wireguard-tools/curve25519.c
+@@ -76,7 +76,13 @@
+ static noinline void memzero_explicit(void *s, size_t count)
+ {
+ 	memset(s, 0, count);
++#if defined(__GNUC__) || defined(__clang__)
+ 	asm volatile("": :"r"(s) : "memory");
++#else
++	volatile unsigned char *vp = (volatile unsigned char *)s;
++	while (count--)
++		*vp++ = 0;
++#endif
+ }
+ 
+ #ifdef __SIZEOF_INT128__
+@@ -87,7 +92,11 @@
+ 
+ void curve25519_generate_public(uint8_t pub[static CURVE25519_KEY_SIZE], const uint8_t secret[static CURVE25519_KEY_SIZE])
+ {
++#ifdef _MSC_VER
++	__declspec(align(8)) static const uint8_t basepoint[CURVE25519_KEY_SIZE] = { 9 };
++#else
+ 	static const uint8_t basepoint[CURVE25519_KEY_SIZE] __aligned(sizeof(uintptr_t)) = { 9 };
++#endif
+ 
+ 	curve25519(pub, secret, basepoint);
+ }
+--- a/contrib/wireguard-tools/ipc-uapi.h
++++ b/contrib/wireguard-tools/ipc-uapi.h
+@@ -124,16 +124,27 @@
+ 	return ret;
+ }
+ 
+-#define NUM(max) ({ \
+-	unsigned long long num; \
+-	char *end; \
++#define ASSIGN_NUM(dst, max) do { \
++	unsigned long long num_; \
++	char *end_; \
+ 	if (!char_is_digit(value[0])) \
+-		break; \
+-	num = strtoull(value, &end, 10); \
+-	if (*end || num > max) \
+-		break; \
+-	num; \
+-})
++		goto uapi_bad_line; \
++	num_ = strtoull(value, &end_, 10); \
++	if (*end_ || num_ > (max)) \
++		goto uapi_bad_line; \
++	(dst) = num_; \
++} while (0)
++
++#define ASSIGN_NEG_NUM(dst, max) do { \
++	unsigned long long num_; \
++	char *end_; \
++	if (!char_is_digit(value[0])) \
++		goto uapi_bad_line; \
++	num_ = strtoull(value, &end_, 10); \
++	if (*end_ || num_ > (max)) \
++		goto uapi_bad_line; \
++	(dst) = -(int)num_; \
++} while (0)
+ 
+ static int userspace_get_device(struct wgdevice **out, const char *iface)
+ {
+@@ -178,10 +189,10 @@
+ 			curve25519_generate_public(dev->public_key, dev->private_key);
+ 			dev->flags |= WGDEVICE_HAS_PRIVATE_KEY | WGDEVICE_HAS_PUBLIC_KEY;
+ 		} else if (!peer && !strcmp(key, "listen_port")) {
+-			dev->listen_port = NUM(0xffffU);
++			ASSIGN_NUM(dev->listen_port, 0xffffU);
+ 			dev->flags |= WGDEVICE_HAS_LISTEN_PORT;
+ 		} else if (!peer && !strcmp(key, "fwmark")) {
+-			dev->fwmark = NUM(0xffffffffU);
++			ASSIGN_NUM(dev->fwmark, 0xffffffffU);
+ 			dev->flags |= WGDEVICE_HAS_FWMARK;
+ 		} else if (!strcmp(key, "public_key")) {
+ 			struct wgpeer *new_peer = calloc(1, sizeof(*new_peer));
+@@ -242,7 +253,7 @@
+ 			}
+ 			freeaddrinfo(resolved);
+ 		} else if (peer && !strcmp(key, "persistent_keepalive_interval")) {
+-			peer->persistent_keepalive_interval = NUM(0xffffU);
++			ASSIGN_NUM(peer->persistent_keepalive_interval, 0xffffU);
+ 			peer->flags |= WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL;
+ 		} else if (peer && !strcmp(key, "allowed_ip")) {
+ 			struct wgallowedip *new_allowedip;
+@@ -272,16 +283,17 @@
+ 			if (*end || allowedip->family == AF_UNSPEC || (allowedip->family == AF_INET6 && allowedip->cidr > 128) || (allowedip->family == AF_INET && allowedip->cidr > 32))
+ 				break;
+ 		} else if (peer && !strcmp(key, "last_handshake_time_sec"))
+-			peer->last_handshake_time.tv_sec = NUM(0x7fffffffffffffffULL);
++			ASSIGN_NUM(peer->last_handshake_time.tv_sec, 0x7fffffffffffffffULL);
+ 		else if (peer && !strcmp(key, "last_handshake_time_nsec"))
+-			peer->last_handshake_time.tv_nsec = NUM(0x7fffffffffffffffULL);
++			ASSIGN_NUM(peer->last_handshake_time.tv_nsec, 0x7fffffffffffffffULL);
+ 		else if (peer && !strcmp(key, "rx_bytes"))
+-			peer->rx_bytes = NUM(0xffffffffffffffffULL);
++			ASSIGN_NUM(peer->rx_bytes, 0xffffffffffffffffULL);
+ 		else if (peer && !strcmp(key, "tx_bytes"))
+-			peer->tx_bytes = NUM(0xffffffffffffffffULL);
++			ASSIGN_NUM(peer->tx_bytes, 0xffffffffffffffffULL);
+ 		else if (!strcmp(key, "errno"))
+-			ret = -NUM(0x7fffffffU);
++			ASSIGN_NEG_NUM(ret, 0x7fffffffU);
+ 	}
++uapi_bad_line:
+ 	ret = -EPROTO;
+ err:
+ 	free(key);
+--- a/contrib/openpam/bin/pamtest/pamtest.c
++++ b/contrib/openpam/bin/pamtest/pamtest.c
+@@ -44,9 +44,11 @@
+ #include <security/pam_appl.h>
+ #include <security/openpam.h>	/* for openpam_ttyconv() */
+ 
++#if !defined(_WIN32)
+ /* OpenPAM internals */
+ extern const char *pam_item_name[PAM_NUM_ITEMS];
+ extern int openpam_debug;
++#endif
+ 
+ static pam_handle_t *pamh;
+ static struct pam_conv pamc;
+--- a/contrib/telnet/telnet/telnet.c
++++ b/contrib/telnet/telnet/telnet.c
+@@ -710,8 +710,13 @@
+ 	return(-1);
+ }
+ #else
++#if defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && !defined(FBSD_CURSES_STATIC)
+ #define	termbuf	ttytype
++extern __declspec(dllimport) char ttytype[];
++#else
++#define	termbuf	ttytype
+ extern char ttytype[];
++#endif
+ #endif
+ 
+ int resettermname = 1;
+--- a/usr.bin/ncal/ncal.c
++++ b/usr.bin/ncal/ncal.c
+@@ -788,8 +788,13 @@
+ 	/* Set name of month. */
+ 	memset(&tm, 0, sizeof(tm));
+ 	tm.tm_mon = m;
++#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
+ 	wcsftime(mlines->name, sizeof(mlines->name) / sizeof(mlines->name[0]),
++		 L"%B", &tm);
++#else
++	wcsftime(mlines->name, sizeof(mlines->name) / sizeof(mlines->name[0]),
+ 		 L"%OB", &tm);
++#endif
+ 	mlines->name[0] = towupper(mlines->name[0]);
+ 
+ 	/*
+@@ -887,8 +892,13 @@
+ 	/* Set name of month centered. */
+ 	memset(&tm, 0, sizeof(tm));
+ 	tm.tm_mon = m;
++#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
+ 	wcsftime(mlines->name, sizeof(mlines->name) / sizeof(mlines->name[0]),
++		 L"%B", &tm);
++#else
++	wcsftime(mlines->name, sizeof(mlines->name) / sizeof(mlines->name[0]),
+ 		 L"%OB", &tm);
++#endif
+ 	mlines->name[0] = towupper(mlines->name[0]);
+ 
+ 	/*

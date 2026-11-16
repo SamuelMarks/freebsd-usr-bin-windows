@@ -32,3 +32,45 @@
  		hostname = UNKNOWN;
  	} else {
  		hostname = hostbuf;
+--- a/usr.bin/diff/diffreg_new.c
++++ b/usr.bin/diff/diffreg_new.c
+@@ -55,34 +55,33 @@
+ static const struct diff_algo_config patience;
+ static const struct diff_algo_config myers_divide;
+ 
+-static const struct diff_algo_config myers_then_patience = (struct diff_algo_config){
++static const struct diff_algo_config myers_then_patience = {
+ 	.impl = diff_algo_myers,
+ 	.permitted_state_size = 1024 * 1024 * sizeof(int),
+ 	.fallback_algo = &patience,
+ };
+ 
+-static const struct diff_algo_config myers_then_myers_divide =
+-	(struct diff_algo_config){
++static const struct diff_algo_config myers_then_myers_divide = {
+ 	.impl = diff_algo_myers,
+ 	.permitted_state_size = 1024 * 1024 * sizeof(int),
+ 	.fallback_algo = &myers_divide,
+ };
+ 
+-static const struct diff_algo_config patience = (struct diff_algo_config){
++static const struct diff_algo_config patience = {
+ 	.impl = diff_algo_patience,
+ 	/* After subdivision, do Patience again: */
+ 	.inner_algo = &patience,
+ 	/* If subdivision failed, do Myers Divide et Impera: */
+ 	.fallback_algo = &myers_then_myers_divide,
+ };
+ 
+-static const struct diff_algo_config myers_divide = (struct diff_algo_config){
++static const struct diff_algo_config myers_divide = {
+ 	.impl = diff_algo_myers_divide,
+ 	/* When division succeeded, start from the top: */
+ 	.inner_algo = &myers_then_myers_divide,
+ 	/* (fallback_algo = NULL implies diff_algo_none). */
+ };
+ 
+-static const struct diff_algo_config no_algo = (struct diff_algo_config){
++static const struct diff_algo_config no_algo = {
+ 	.impl = diff_algo_none,
+ };

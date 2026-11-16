@@ -28,6 +28,16 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 project(freebsd_usr_bin_windows VERSION 15.0.0 LANGUAGES C)
 
+if(MSVC AND NOT CMAKE_HOST_WIN32 AND NOT CMAKE_NM)
+    find_program(_FBSD_HOST_NM
+        NAMES llvm-nm x86_64-w64-mingw32-nm nm
+        PATHS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin
+    )
+    if(_FBSD_HOST_NM)
+        set(CMAKE_NM "${_FBSD_HOST_NM}" CACHE FILEPATH "Path to nm for WINDOWS_EXPORT_ALL_SYMBOLS" FORCE)
+    endif()
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED OFF)
 set(FREEBSD_VERSION "15.0.0" CACHE STRING "Upstream FreeBSD release version")
@@ -204,7 +214,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/FreeBsdInternalLibs.cmake")
 # -----------------------------------------------------------------------------
 if(FREEBSD_BUILD_INDIVIDUAL AND EXISTS "${FREEBSD_GEN_DIR}/per_binary_subdirs.cmake")
     if(NOT DEFINED FREEBSD_ENABLED_BINARIES)
-        if(FREEBSD_TARGET_DOS OR (WIN32 AND CMAKE_CROSSCOMPILING) OR NOT (FREEBSD_HOST_YACC AND FREEBSD_HOST_LEX))
+        if(FREEBSD_TARGET_DOS OR NOT (FREEBSD_HOST_YACC AND FREEBSD_HOST_LEX))
             set(FREEBSD_ENABLED_BINARIES
                 ${FREEBSD_NATIVE_DIRECT_APPLETS}
                 addr2line alias backlight biff bintrans bomtool brandelf
@@ -278,6 +288,7 @@ if(FREEBSD_BUILD_MULTICALL)
             _CRT_SECURE_NO_WARNINGS
             _CRT_NONSTDC_NO_DEPRECATE
             _CRT_NONSTDC_NO_WARNINGS
+            _CRT_STDIO_ISO_WIDE_SPECIFIERS=1
             WIN32_LEAN_AND_MEAN
             NOMINMAX
             _GNU_SOURCE=1

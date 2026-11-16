@@ -24,6 +24,16 @@ required by that single utility.
 
 include_guard(GLOBAL)
 
+if(MSVC AND NOT CMAKE_HOST_WIN32 AND NOT CMAKE_NM)
+    find_program(_FBSD_S3_HOST_NM
+        NAMES llvm-nm x86_64-w64-mingw32-nm nm
+        PATHS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin
+    )
+    if(_FBSD_S3_HOST_NM)
+        set(CMAKE_NM "${_FBSD_S3_HOST_NM}" CACHE FILEPATH "Path to nm for WINDOWS_EXPORT_ALL_SYMBOLS" FORCE)
+    endif()
+endif()
+
 if(NOT DEFINED FREEBSD_SECTION3_SHARED)
     if(FREEBSD_TARGET_DOS)
         set(FREEBSD_SECTION3_SHARED OFF)
@@ -1299,6 +1309,7 @@ if(EXISTS "${_FBSD_CODEGEN_DIR}/libsys/fbsd_sys.c")
         INCLUDES "${_FBSD_CODEGEN_DIR}/libsys"
         DATA_EXPORTS openpam_debug openpam_ttyconv_timeout pam_item_name _pam_item_name ypresp_allfn ypresp_data
         PUBLIC_HEADERS "${_FBSD_CODEGEN_DIR}/libsys/security/pam_appl.h"
+                       "${_FBSD_CODEGEN_DIR}/libsys/security/openpam.h"
                        "${_FBSD_CODEGEN_DIR}/libsys/rpcsvc/ypclnt.h"
                        "${_FBSD_CODEGEN_DIR}/libsys/sys/nv.h"
     )

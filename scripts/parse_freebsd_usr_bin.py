@@ -899,8 +899,6 @@ def stage_build_time_generated_files(
             [
                 "",
                 "#ifdef _WIN32",
-                "#undef HAVE_TERMIOS_FUNCS",
-                "#define HAVE_TERMIOS_FUNCS 0",
                 "#undef HAVE_OSPEED",
                 "#define HAVE_OSPEED 0",
                 "#undef HAVE_FDATASYNC",
@@ -1268,6 +1266,7 @@ def _parse_single_makefile_dir(
             vac_dir = cg_base / "vacation"
             vac_sm_c = (vac_dir / "fbsd_vacation_sm.c").resolve()
             inc_dirs.insert(0, str(vac_dir))
+            extra_defs.append("_CRT_DECLARE_NONSTDC_NAMES=1")
             if vac_sm_c.is_file():
                 c_srcs = tuple(dict.fromkeys([*c_srcs, str(vac_sm_c)]))
         if prog_name == "mkimg":
@@ -1286,7 +1285,7 @@ def _parse_single_makefile_dir(
             extra_defs.append("FBSD_FREEBSD_RLIMITS=1")
         if prog_name == "posixmqcontrol":
             extra_defs.append("FBSD_POSIXMQ_BUILD=1")
-        if prog_name in ("ypcat", "ypwhich"):
+        if prog_name in ("pamtest", "ypcat", "ypwhich"):
             inc_dirs.insert(0, str(cg_base / "libsys"))
             s3_targets = tuple(dict.fromkeys([*s3_targets, "fbsd_libsys"]))
         if prog_name == "getaddrinfo":

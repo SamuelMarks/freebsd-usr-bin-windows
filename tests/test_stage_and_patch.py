@@ -292,11 +292,33 @@ def test_stage_patched_sources_and_verify_upstream_clean(
         + LF,
         encoding="utf-8",
     )
+    orig_h = tool_dir / "printf.h"
+    orig_h.write_text(f"#define PRINTF_VER 1{LF}", encoding="utf-8")
+    sib_c = tool_dir / "helper.c"
+    sib_c.write_text(f'#include "printf.h"{LF}', encoding="utf-8")
+    sib_mk = tool_dir / "Makefile"
+    sib_mk.write_text(f"PROG=printf{LF}", encoding="utf-8")
+    (f15_dir / "11_f15_hdr.patch").write_text(
+        LF.join(
+            [
+                "--- a/usr.bin/printf/printf.h",
+                "+++ b/usr.bin/printf/printf.h",
+                "@@ -1 +1 @@",
+                "-#define PRINTF_VER 1",
+                "+#define PRINTF_VER 15",
+            ]
+        )
+        + LF,
+        encoding="utf-8",
+    )
     staged_v15 = stage_patched_sources(src_root, patches_dir, tmp_path / "staged_v15")
     assert (
         staged_v15[orig_c.resolve()].read_text(encoding="utf-8")
         == f"int x = 10;{LF}int y = 150;{LF}"
     )
+    assert staged_v15[orig_h.resolve()].read_text(encoding="utf-8") == f"#define PRINTF_VER 15{LF}"
+    assert staged_v15[sib_c.resolve()].read_text(encoding="utf-8") == f'#include "printf.h"{LF}'
+    assert sib_mk.resolve() not in staged_v15
 
     (patches_dir / "03_missing.patch").write_text(
         LF.join(

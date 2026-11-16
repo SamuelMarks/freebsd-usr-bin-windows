@@ -553,6 +553,12 @@ void xo_warnc(int code, const char *fmt, ...);
 #ifndef __builtin_expect
 #define __builtin_expect(x, v) (x)
 #endif
+#ifndef __builtin_memcpy
+#define __builtin_memcpy(d, s, n) memcpy((d), (s), (n))
+#endif
+#ifndef __builtin_memset
+#define __builtin_memset(d, c, n) memset((d), (c), (n))
+#endif
 static __inline int fbsd_ctzll_compat(unsigned long long v) {
     int n = 0;
     if (v == 0ULL) return 64;
@@ -1150,8 +1156,10 @@ static __inline int ether_ntohost(char *hostname, const void *e) {
 static __inline void setproctitle(const char *fmt, ...) { (void)fmt; }
 #endif
 #if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__) || defined(__linux__)
-#if defined(__linux__) && __has_include(<resolv.h>)
+#if defined(__linux__) && defined(__has_include)
+#if __has_include(<resolv.h>)
 #include <resolv.h>
+#endif
 #endif
 int fbsd_b64_ntop(const unsigned char *src, size_t srclength, char *target, size_t targsize);
 int fbsd_b64_pton(const char *src, unsigned char *target, size_t targsize);
@@ -1200,6 +1208,36 @@ static __inline void fbsd_srandom_shim(unsigned int s) { srand(s); }
 #define wcwidth fbsd_wcwidth
 #undef wcswidth
 #define wcswidth fbsd_wcswidth
+#if defined(_MSC_VER) && !defined(__cplusplus)
+#include <stdarg.h>
+#include <wchar.h>
+static __inline int fbsd_win32_wprintf(const wchar_t *fmt, ...) {
+    wchar_t wbuf[4096];
+    char mbuf[16384];
+    va_list ap;
+    int wlen;
+    size_t mlen;
+    va_start(ap, fmt);
+    wlen = vswprintf(wbuf, sizeof(wbuf) / sizeof(wbuf[0]), fmt, ap);
+    va_end(ap);
+    if (wlen < 0) {
+        return -1;
+    }
+    wbuf[wlen] = L'\0';
+    mlen = wcstombs(mbuf, wbuf, sizeof(mbuf) - 1);
+    if (mlen == (size_t)-1) {
+        int i;
+        for (i = 0; i < wlen && (size_t)i < sizeof(mbuf) - 1; ++i) {
+            mbuf[i] = (char)(wbuf[i] & 0x7f);
+        }
+        mlen = (size_t)i;
+    }
+    mbuf[mlen] = '\0';
+    return (int)fwrite(mbuf, 1, mlen, stdout);
+}
+#undef wprintf
+#define wprintf fbsd_win32_wprintf
+#endif
 static __inline int getentropy(void *buf, size_t len) {
     unsigned char *p = (unsigned char *)buf;
     size_t i;
@@ -1550,9 +1588,18 @@ typedef jmp_buf sigjmp_buf;
 #ifndef XO_ENCODERDIR
 #define XO_ENCODERDIR "/usr/lib/libxo/encoder"
 #endif
+#ifdef __reserved
+#undef __reserved
+#endif
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#if defined(_MSC_VER) && defined(__cplusplus)
+__declspec(noreturn) void err(int eval, const char *fmt, ...);
+__declspec(noreturn) void errc(int eval, int code, const char *fmt, ...);
+__declspec(noreturn) void errx(int eval, const char *fmt, ...);
 #endif
 
 long long strsuftoll(const char *desc, const char *val, long long min, long long max);
@@ -2373,13 +2420,26 @@ static __inline void iconvlist(int (*do_one)(unsigned int, const char *const *, 
 #ifndef _FBSD_NATIVE_TERMCAP_H
 #ifndef _FBSD_PORTABLE_TERMCAP_H
 #define _FBSD_PORTABLE_TERMCAP_H 1
+#ifndef _FBSD_CURSES_DATA
+#if defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)
+#if defined(fbsd_libtinfow_EXPORTS) || defined(fbsd_libcurses_EXPORTS)
+#define _FBSD_CURSES_DATA extern __declspec(dllexport)
+#elif !defined(FBSD_CURSES_STATIC)
+#define _FBSD_CURSES_DATA extern __declspec(dllimport)
+#else
+#define _FBSD_CURSES_DATA extern
+#endif
+#else
+#define _FBSD_CURSES_DATA extern
+#endif
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
-extern char PC;
-extern char *UP;
-extern char *BC;
-extern short ospeed;
+_FBSD_CURSES_DATA char PC;
+_FBSD_CURSES_DATA char *UP;
+_FBSD_CURSES_DATA char *BC;
+_FBSD_CURSES_DATA short ospeed;
 int tgetent(char *bp, const char *name);
 int tgetflag(const char *id);
 int tgetnum(const char *id);
