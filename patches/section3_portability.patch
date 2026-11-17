@@ -42,7 +42,30 @@
  }
  
  /*
-@@ -770,7 +772,7 @@
+@@ -485,5 +487,9 @@
+ static int	 ftp_writefn(void *, const char *, int);
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ static fpos_t	 ftp_seekfn(void *, fpos_t, int);
++#else
++static off_t	 ftp_seekfn(void *, off_t, int);
++#endif
+ static int	 ftp_closefn(void *);
+ 
+ static int
+@@ -548,7 +554,12 @@
+ 
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ static fpos_t
+ ftp_seekfn(void *v, fpos_t pos __unused, int whence __unused)
++#else
++static off_t
++ftp_seekfn(void *v, off_t pos __unused, int whence __unused)
++#endif
+ {
+ 	struct ftpio *io;
+ 
+ 	io = (struct ftpio *)v;
+@@ -770,7 +777,7 @@
  		if (bindaddr != NULL && *bindaddr != '\0' &&
  		    (e = fetch_bind(sd, sa.ss_family, bindaddr)) != 0)
  			goto ouch;
@@ -398,14 +421,35 @@
  	switch (ut->ut_type) {
 --- a/usr.bin/chpass/field.c
 +++ b/usr.bin/chpass/field.c
-@@ -163,18 +163,24 @@
+@@ -151,30 +151,49 @@
+ int
+ p_class(char *p, struct passwd *pw, ENTRY *ep __unused)
+ {
++#if !defined(__linux__)
+ 	if (!(pw->pw_class = strdup(p))) {
+ 		warnx("can't save entry");
+ 		return (-1);
+ 	}
++#else
++	(void)p;
++	(void)pw;
++#endif
+ 
+ 	return (0);
+ }
+ 
+ /* ARGSUSED */
  int
  p_change(char *p, struct passwd *pw, ENTRY *ep __unused)
  {
 -	if (!atot(p, &pw->pw_change))
 +	time_t chg = 0;
 +	if (!atot(p, &chg)) {
++#if !defined(__linux__)
 +		pw->pw_change = chg;
++#else
++		(void)pw;
++#endif
  		return (0);
 +	}
  	warnx("illegal date for change field");
@@ -419,7 +463,11 @@
 -	if (!atot(p, &pw->pw_expire))
 +	time_t exp = 0;
 +	if (!atot(p, &exp)) {
++#if !defined(__linux__)
 +		pw->pw_expire = exp;
++#else
++		(void)pw;
++#endif
  		return (0);
 +	}
  	warnx("illegal date for expire field");
@@ -869,6 +917,18 @@
  
  /*
   * On macOS isxdigit(), etc are defined in _ctype.h, but we have to include the
+--- a/usr.bin/localedef/bootstrap/_ctype.h
++++ b/usr.bin/localedef/bootstrap/_ctype.h
+@@ -41,6 +41,9 @@
+ #ifndef __FreeBSD__
+ typedef	int		__ct_rune_t;	/* arg type for ctype funcs */
+ typedef	__ct_rune_t	__rune_t;	/* rune_t (see above) */
+ typedef	__ct_rune_t	__wint_t;	/* wint_t (see above) */
+ #endif
++#ifdef __isctype
++#undef __isctype
++#endif
+ #include "../../include/_ctype.h"
 --- a/usr.bin/mkimg/uuid.c
 +++ b/usr.bin/mkimg/uuid.c
 @@ -44,7 +44,7 @@
@@ -900,7 +960,7 @@
  
  	for (unsigned int i = 0; i < WG_KEY_LEN; ++i) {
  		acc |= key[i];
-+#if defined(__GNUC__) || defined(__clang__)
++#if (defined(__GNUC__) || defined(__clang__)) && !defined(_MSC_VER)
  		asm volatile("" : "=r"(acc) : "0"(acc));
 +#endif
  	}
@@ -911,7 +971,7 @@
  static noinline void memzero_explicit(void *s, size_t count)
  {
  	memset(s, 0, count);
-+#if defined(__GNUC__) || defined(__clang__)
++#if (defined(__GNUC__) || defined(__clang__)) && !defined(_MSC_VER)
  	asm volatile("": :"r"(s) : "memory");
 +#else
 +	volatile unsigned char *vp = (volatile unsigned char *)s;
@@ -933,6 +993,17 @@
  
  	curve25519(pub, secret, basepoint);
  }
+--- a/usr.bin/bsdiff/bsdiff/bsdiff.c
++++ b/usr.bin/bsdiff/bsdiff/bsdiff.c
+@@ -60,7 +60,7 @@
+ 	return i;
+ }
+ 
+-static off_t search(off_t *I,u_char *old,off_t oldsize,
++static off_t search(saidx_t *I,u_char *old,off_t oldsize,
+ 		u_char *new,off_t newsize,off_t st,off_t en,off_t *pos)
+ {
+ 	off_t x,y;
 --- a/contrib/wireguard-tools/ipc-uapi.h
 +++ b/contrib/wireguard-tools/ipc-uapi.h
 @@ -124,16 +124,27 @@
@@ -1077,3 +1148,128 @@
  	mlines->name[0] = towupper(mlines->name[0]);
  
  	/*
+--- a/usr.bin/chpass/edit.c
++++ b/usr.bin/chpass/edit.c
+@@ -118,10 +118,16 @@
+ 		(void)fprintf(fp, "Gid [# or name]: %lu\n",
+ 		    (unsigned long)pw->pw_gid);
++#if !defined(__linux__)
+ 		(void)fprintf(fp, "Change [month day year]: %s\n",
+ 		    ttoa(pw->pw_change));
+ 		(void)fprintf(fp, "Expire [month day year]: %s\n",
+ 		    ttoa(pw->pw_expire));
+ 		(void)fprintf(fp, "Class: %s\n", pw->pw_class);
++#else
++		(void)fprintf(fp, "Change [month day year]: %s\n", ttoa(0));
++		(void)fprintf(fp, "Expire [month day year]: %s\n", ttoa(0));
++		(void)fprintf(fp, "Class: %s\n", "");
++#endif
+ 		(void)fprintf(fp, "Home directory: %s\n", pw->pw_dir);
+ 		(void)fprintf(fp, "Shell: %s\n",
+ 		    *pw->pw_shell ? pw->pw_shell : _PATH_BSHELL);
+--- a/usr.bin/compress/compress.c
++++ b/usr.bin/compress/compress.c
+@@ -373,6 +373,8 @@
+ 	if (chmod(name, fs->st_mode) && errno != EOPNOTSUPP)
+ 		cwarn("chmod: %s", name);
+ 
++#if !defined(__linux__)
+ 	if (chflags(name, fs->st_flags) && errno != EOPNOTSUPP)
+ 		cwarn("chflags: %s", name);
++#endif
+ }
+--- a/usr.bin/fortune/fortune/fortune.c
++++ b/usr.bin/fortune/fortune/fortune.c
+@@ -700,9 +700,9 @@
+ 	DPRINTF(1, (stderr, "adding dir \"%s\"\n", fp->path));
+ 	fp->num_children = 0;
+ 	while ((dirent = readdir(dir)) != NULL) {
+-		if (dirent->d_namlen == 0)
++		if (dirent->d_name[0] == '\0')
+ 			continue;
+-		name = copy(dirent->d_name, dirent->d_namlen);
++		name = copy(dirent->d_name, (unsigned int)strlen(dirent->d_name));
+ 		if (add_file(NO_PROB, name, fp->path, &fp->child, &tailp, fp))
+ 			fp->num_children++;
+ 		else
+--- a/usr.bin/gzip/gzip.c
++++ b/usr.bin/gzip/gzip.c
+@@ -1096,5 +1096,7 @@
+ 
+ 	/* only try flags if they exist already */
++#if !defined(__linux__)
+         if (sb.st_flags != 0 && fchflags(fd, sb.st_flags) < 0)
+ 		maybe_warn("couldn't fchflags: %s", file);
++#endif
+ }
+--- a/usr.bin/id/id.c
++++ b/usr.bin/id/id.c
+@@ -473,7 +473,13 @@
+ 			err(1, "getpwuid");
+ 	}
++#if !defined(__linux__)
+ 	(void)printf("%s:%s:%d:%d:%s:%ld:%ld:%s:%s:%s\n", pw->pw_name,
+ 	    pw->pw_passwd, pw->pw_uid, pw->pw_gid, pw->pw_class,
+ 	    (long)pw->pw_change, (long)pw->pw_expire, pw->pw_gecos,
+ 	    pw->pw_dir, pw->pw_shell);
++#else
++	(void)printf("%s:%s:%d:%d:%s:%ld:%ld:%s:%s:%s\n", pw->pw_name,
++	    pw->pw_passwd, pw->pw_uid, pw->pw_gid, "",
++	    0L, 0L, pw->pw_gecos, pw->pw_dir, pw->pw_shell);
++#endif
+ }
+--- a/usr.bin/logins/logins.c
++++ b/usr.bin/logins/logins.c
+@@ -215,10 +215,19 @@
+ 		pwds[npwds].pw_uid = pwd->pw_uid;
+ 		pwds[npwds].pw_gid = pwd->pw_gid;
++#if !defined(__linux__)
+ 		pwds[npwds].pw_change = pwd->pw_change;
+ 		pwds[npwds].pw_class = xstrdup(pwd->pw_class);
++#else
++		pwds[npwds].pw_change = 0;
++		pwds[npwds].pw_class = xstrdup("");
++#endif
+ 		pwds[npwds].pw_gecos = xstrdup(pwd->pw_gecos);
+ 		pwds[npwds].pw_dir = xstrdup(pwd->pw_dir);
+ 		pwds[npwds].pw_shell = xstrdup(pwd->pw_shell);
++#if !defined(__linux__)
+ 		pwds[npwds].pw_expire = pwd->pw_expire;
++#else
++		pwds[npwds].pw_expire = 0;
++#endif
+ 		pwds[npwds].pw_selected = 0;
+ 		npwds++;
+--- a/usr.bin/mkuzip/mkuz_insize.c
++++ b/usr.bin/mkuzip/mkuz_insize.c
+@@ -49,7 +49,11 @@
+ 		warn("fstat(%s)", cfp->iname);
+ 		return (-1);
+ 	}
++#if !defined(__linux__)
+ 	if ((sb.st_flags & SF_SNAPSHOT) != 0) {
++#else
++	if (0) {
++#endif
+ 		if (fstatfs(cfp->fdr, &statfsbuf) != 0) {
+ 			warn("fstatfs(%s)", cfp->iname);
+ 			return (-1);
+--- a/usr.bin/msgs/msgs.c
++++ b/usr.bin/msgs/msgs.c
+@@ -273,7 +273,7 @@
+ 
+ 			if (dp->d_ino == 0)
+ 				continue;
+-			if (dp->d_namlen == 0)
++			if (dp->d_name[0] == '\0')
+ 				continue;
+ 
+ 			if (clean)
+@@ -769,6 +769,6 @@
+ 			else
+ 				strcpy(fname, "Messages");
+-			fd = open(fname, O_RDWR|O_EXCL|O_CREAT|O_APPEND);
++			fd = open(fname, O_RDWR|O_EXCL|O_CREAT|O_APPEND, 0666);
+ 		}
+ 		else {
+ 			strcpy(fname, _PATH_TMP);

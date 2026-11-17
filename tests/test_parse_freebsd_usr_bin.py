@@ -530,6 +530,9 @@ def test_stage_and_audit_synthetic_and_real_tree(
         ("vmstat", "vmstat"),
         ("localedef", "localedef"),
         ("grep", "grep"),
+        ("diff", "diff"),
+        ("fetch", "fetch"),
+        ("bspatch", "bspatch"),
     ):
         sp_dir = synth_usr_bin / special_name
         sp_dir.mkdir()
@@ -565,7 +568,10 @@ def test_stage_and_audit_synthetic_and_real_tree(
     # Second invocation onto same synth_out hits pre-existing fallback dispatcher branch
     audit_freebsd_usr_bin_binaries(synth_src, synth_out)
     assert top_mks == ["Makefile"]
-    assert len(synth_specs) == 23
+    assert len(synth_specs) == 26
+    assert "FBSD_DIFF_BUILD=1" in next(b for b in synth_bins if b.prog == "diff").compile_defs
+    assert "FBSD_FETCH_BUILD=1" in next(b for b in synth_bins if b.prog == "fetch").compile_defs
+    assert "FBSD_BSPATCH_BUILD=1" in next(b for b in synth_bins if b.prog == "bspatch").compile_defs
     gamma_bin = next(b for b in synth_bins if b.prog == "gamma")
     assert gamma_bin.yacc_sources
     assert gamma_bin.lex_sources
@@ -576,7 +582,7 @@ def test_stage_and_audit_synthetic_and_real_tree(
     assert all(not s.endswith("compat_recallocarray.c") for s in mandoc_bin.sources)
 
     _, compat_specs = audit_freebsd_usr_bin(synth_src, tmp_path / "compat_out")
-    assert len(compat_specs) == 23
+    assert len(compat_specs) == 26
 
     json_p, cmake_p = write_manifest_files(top_mks, synth_specs, synth_out, binaries=synth_bins)
     assert json_p.is_file()

@@ -50,6 +50,10 @@ def test_emit_all_section3_shims_and_compile(tmp_path: Path) -> None:
     assert "archive_windows.h" in la_files
     assert "bsdtar_windows.h" in la_files
     assert "fbsd_libarchive_win32.c" in la_files
+    assert "#define waitpid __la_waitpid" in la_files["archive_windows.h"].read_text(
+        encoding="utf-8"
+    )
+    assert "WaitForSingleObject" in la_files["fbsd_libarchive_win32.c"].read_text(encoding="utf-8")
 
     dlg_files = emit_libdialog_section3_sources(tmp_path / "libdialog")
     assert "dialog.h" in dlg_files

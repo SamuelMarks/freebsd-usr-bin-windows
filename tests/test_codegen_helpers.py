@@ -176,6 +176,7 @@ def test_emit_all_codegen_helpers_full_and_minimal(tmp_path: Path) -> None:
     vi_dir = full_src / "usr.bin" / "vi"
     vi_dir.mkdir(parents=True)
     (vi_dir / "config.h").write_text(f"#define VI_CFG 1{LF}", encoding="utf-8")
+    (vi_dir / "pathnames.h").write_text(f"#define VI_PATHS 1{LF}", encoding="utf-8")
 
     caps_dir = full_src / "contrib" / "ncurses" / "include"
     caps_dir.mkdir(parents=True)
@@ -287,6 +288,13 @@ def test_emit_all_codegen_helpers_full_and_minimal(tmp_path: Path) -> None:
     )
     assert "codegen/vi/options_def.h" in full_emitted
     assert "codegen/vi/config.h" in full_emitted
+    assert "codegen/vi/pathnames.h" in full_emitted
+    assert "#undef HAVE_DIRENT_D_NAMLEN" in full_emitted["codegen/vi/config.h"].read_text(
+        encoding="utf-8"
+    )
+    assert "#undef HAVE_DIRENT_D_NAMLEN" not in full_emitted["codegen/vi/pathnames.h"].read_text(
+        encoding="utf-8"
+    )
     assert "codegen/ncurses/termsort.h" in full_emitted
     assert "codegen/elftoolchain/sys/elf_common.h" in full_emitted
     assert "codegen/elftoolchain/gensrcs/libelf_fsize.c" in full_emitted

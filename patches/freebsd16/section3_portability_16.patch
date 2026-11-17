@@ -10,6 +10,68 @@
 +	mounted = 0;
 +#endif
  	if (!quiet)
+@@ -766,15 +770,31 @@
+ 	case SHOW_st_atime:
++#ifdef __linux__
++		tsp = &st->st_atim;
++#else
+ 		tsp = &st->st_atimespec;
++#endif
+ 		/* FALLTHROUGH */
+ 	case SHOW_st_mtime:
+ 		if (tsp == NULL)
++#ifdef __linux__
++			tsp = &st->st_mtim;
++#else
+ 			tsp = &st->st_mtimespec;
++#endif
+ 		/* FALLTHROUGH */
+ 	case SHOW_st_ctime:
+ 		if (tsp == NULL)
++#ifdef __linux__
++			tsp = &st->st_ctim;
++#else
+ 			tsp = &st->st_ctimespec;
++#endif
+ 		/* FALLTHROUGH */
+ 	case SHOW_st_btime:
+ 		if (tsp == NULL)
++#ifdef __linux__
++			tsp = &st->st_ctim;
++#else
+ 			tsp = &st->st_birthtimespec;
++#endif
+ 		ts = *tsp;		/* copy so we can muck with it */
+@@ -820,18 +840,29 @@
+ 	case SHOW_st_flags:
++#ifdef __linux__
++		small = 1;
++		data = 0;
++		sdata = "";
++#else
+ 		small = (sizeof(st->st_flags) == 4);
+ 		data = st->st_flags;
+ 		sdata = xfflagstostr(st->st_flags);
++#endif
+ 		if (*sdata == '\0')
+ 			sdata = "-";
+ 		formats = FMTF_DECIMAL | FMTF_OCTAL | FMTF_UNSIGNED | FMTF_HEX |
+ 		    FMTF_STRING;
+ 		if (ofmt == 0)
+ 			ofmt = FMTF_UNSIGNED;
+ 		break;
+ 	case SHOW_st_gen:
++#ifdef __linux__
++		small = 1;
++		data = 0;
++#else
+ 		small = (sizeof(st->st_gen) == 4);
+ 		data = st->st_gen;
++#endif
+ 		sdata = NULL;
+ 		formats = FMTF_DECIMAL | FMTF_OCTAL | FMTF_UNSIGNED | FMTF_HEX;
+ 		if (ofmt == 0)
+ 			ofmt = FMTF_UNSIGNED;
 --- a/usr.bin/rpcinfo/rpcinfo.c
 +++ b/usr.bin/rpcinfo/rpcinfo.c
 @@ -596,7 +596,7 @@
@@ -30,3 +92,15 @@
  	if ((rpc_stat != RPC_SUCCESS) && (rpc_stat != RPC_TIMEDOUT))
  		errx(1, "broadcast failed: %s", clnt_sperrno(rpc_stat));
  	exit(0);
+--- a/usr.bin/du/du.c
++++ b/usr.bin/du/du.c
+@@ -526,7 +526,9 @@
+ {
+ 	struct ignentry *ign;
+ 
++#if !defined(__linux__)
+ 	if (nodumpflag && (ent->fts_statp->st_flags & UF_NODUMP))
+ 		return (true);
++#endif
+ 	SLIST_FOREACH(ign, &ignores, next) {
+ 		if (fnmatch(ign->mask, ent->fts_name, 0) != FNM_NOMATCH)

@@ -444,6 +444,12 @@ void xo_warnc(int code, const char *fmt, ...);
 
     set(_preinclude_h [=[#ifndef FREEBSD_COMPAT_PREINCLUDE_H_
 #define FREEBSD_COMPAT_PREINCLUDE_H_
+#if defined(__clang__) && defined(_MSC_VER)
+#ifdef __attribute__
+#undef __attribute__
+#endif
+#include <intrin.h>
+#endif
 #ifndef _DARWIN_C_SOURCE
 #define _DARWIN_C_SOURCE 1
 #endif
@@ -558,6 +564,15 @@ void xo_warnc(int code, const char *fmt, ...);
 #endif
 #ifndef __builtin_memset
 #define __builtin_memset(d, c, n) memset((d), (c), (n))
+#endif
+static __inline int fbsd_ctz_compat(unsigned int v) {
+    int n = 0;
+    if (v == 0U) return 32;
+    while ((v & 1U) == 0U) { v >>= 1; n++; }
+    return n;
+}
+#ifndef __builtin_ctz
+#define __builtin_ctz fbsd_ctz_compat
 #endif
 static __inline int fbsd_ctzll_compat(unsigned long long v) {
     int n = 0;
@@ -1156,11 +1171,6 @@ static __inline int ether_ntohost(char *hostname, const void *e) {
 static __inline void setproctitle(const char *fmt, ...) { (void)fmt; }
 #endif
 #if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__) || defined(__linux__)
-#if defined(__linux__) && defined(__has_include)
-#if __has_include(<resolv.h>)
-#include <resolv.h>
-#endif
-#endif
 int fbsd_b64_ntop(const unsigned char *src, size_t srclength, char *target, size_t targsize);
 int fbsd_b64_pton(const char *src, unsigned char *target, size_t targsize);
 #undef b64_ntop
@@ -1411,7 +1421,7 @@ struct ip6_rthdr {
 #define logout telnet_logout
 #endif
 #ifdef FBSD_NVI_BUILD
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
 int openpty(int *amaster, int *aslave, char *name, void *termp, void *winp);
 int login_tty(int fd);
 #endif
@@ -1503,6 +1513,32 @@ static const char *const rlimit_ident[@_fbsd_rlim_nlimits@] = {
 #include <fcntl.h>
 #include <inttypes.h>
 #include <time.h>
+#include <wctype.h>
+#if defined(_MSC_VER)
+#ifndef isascii
+#define isascii __isascii
+#endif
+#ifndef ftello
+#define ftello _ftelli64
+#endif
+#ifndef fseeko
+#define fseeko _fseeki64
+#endif
+#endif
+#if defined(__linux__)
+#include <dirent.h>
+#include <sys/file.h>
+#include <sys/sysctl.h>
+#endif
+#ifdef FBSD_DIFF_BUILD
+#define splice fbsd_diff_splice
+#endif
+#ifdef FBSD_FETCH_BUILD
+#define once_flag fbsd_fetch_once_flag
+#endif
+#ifdef FBSD_BSPATCH_BUILD
+#define dirfd fbsd_bspatch_dirfd
+#endif
 #if defined(_WIN32)
 #include <io.h>
 #elif defined(__DOS__) || defined(__WATCOMC__)
@@ -1829,6 +1865,61 @@ void *bsd_setmode(const char *p);
 #define _FBSD_SETMODE_PICK(_1, _2, NAME, ...) NAME
 #undef setmode
 #define setmode(...) _FBSD_SETMODE_PICK(__VA_ARGS__, _FBSD_SETMODE_2, _FBSD_SETMODE_1)(__VA_ARGS__)
+#elif defined(__linux__) && !defined(__cplusplus)
+void *bsd_setmode(const char *p);
+#undef setmode
+#define setmode(p) bsd_setmode(p)
+#endif
+
+#if defined(__linux__)
+#ifndef DIRENT_MISSING_D_NAMLEN
+#define DIRENT_MISSING_D_NAMLEN 1
+#endif
+#ifndef UF_NODUMP
+#define UF_NODUMP 0x00000001UL
+#endif
+static __inline int chflags(const char *path, unsigned long flags) { (void)path; (void)flags; return 0; }
+static __inline int lchflags(const char *path, unsigned long flags) { (void)path; (void)flags; return 0; }
+static __inline int fchflags(int fd, unsigned long flags) { (void)fd; (void)flags; return 0; }
+static __inline int fbsd_fdscandir_linux(
+    int dirfd,
+    struct dirent ***namelist,
+    int (*selectf)(const struct dirent *),
+    int (*compar)(const struct dirent **, const struct dirent **))
+{
+    int dfd = dup(dirfd);
+    DIR *d;
+    struct dirent *ent;
+    struct dirent **list = NULL;
+    size_t cnt = 0, cap = 0;
+    if (dfd < 0) return -1;
+    d = fdopendir(dfd);
+    if (d == NULL) { close(dfd); return -1; }
+    while ((ent = readdir(d)) != NULL) {
+        struct dirent *copy;
+        if (selectf != NULL && !selectf(ent)) continue;
+        if (cnt == cap) {
+            size_t ncap = cap ? cap * 2 : 16;
+            struct dirent **nlist = (struct dirent **)realloc(list, ncap * sizeof(*list));
+            if (nlist == NULL) { closedir(d); return -1; }
+            list = nlist;
+            cap = ncap;
+        }
+        copy = (struct dirent *)malloc(sizeof(*copy));
+        if (copy == NULL) { closedir(d); return -1; }
+        memcpy(copy, ent, sizeof(*copy));
+        list[cnt++] = copy;
+    }
+    closedir(d);
+    if (compar != NULL && cnt > 1) {
+        qsort(list, cnt, sizeof(*list), (int (*)(const void *, const void *))compar);
+    }
+    *namelist = list;
+    return (int)cnt;
+}
+#ifndef fdscandir
+#define fdscandir fbsd_fdscandir_linux
+#endif
 #endif
 
 #if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__) || defined(__linux__)
@@ -1973,8 +2064,16 @@ static __inline int iswrune(wint_t wc) {
 #ifndef iscntrl_l
 #define iscntrl_l(c, loc) ((void)(loc), iscntrl((unsigned char)(c)))
 #endif
+#if !defined(__GLIBC__)
 static __inline int setlogin(const char *name) { (void)name; return 0; }
 static __inline int revoke(const char *path) { (void)path; return 0; }
+#endif
+#ifndef REG_NOSPEC
+#define REG_NOSPEC 0020
+#endif
+#ifndef IPPROTO_ST
+#define IPPROTO_ST 7
+#endif
 static const char *const fbsd_sys_signame_compat[32] = {
     "Signal 0", "hup", "int", "quit", "ill", "trap", "abrt", "emt",
     "fpe", "kill", "bus", "segv", "sys", "pipe", "alrm", "term",
@@ -1986,6 +2085,97 @@ static const char *const fbsd_sys_signame_compat[32] = {
 #endif
 struct sockaddr;
 int sockaddr_snprintf(char *buf, size_t len, const char *fmt, const struct sockaddr *sa);
+#endif
+
+#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__) || defined(__linux__)
+#ifndef TIOCSETD
+#define TIOCSETD 0x8004741bUL
+#define TIOCSBRK 0x2000747bUL
+#define TIOCCBRK 0x2000747aUL
+#endif
+#ifndef EV_FLAG1
+#define EV_FLAG1 0x2000
+#endif
+#ifndef EV_FORCEONESHOT
+#define EV_FORCEONESHOT 0x0100
+#define EV_KEEPUDATA 0x0200
+#endif
+#ifndef TCP_NOOPT
+#define TCP_NOOPT 8
+#endif
+#ifndef TCP_MD5SIG
+#define TCP_MD5SIG 16
+#endif
+#ifndef TIOCCDTR
+#define TIOCCDTR 0x20007478UL
+#endif
+#ifndef TIOCSDTR
+#define TIOCSDTR 0x20007479UL
+#endif
+#ifndef TIOCMBIS
+#define TIOCMBIS 0x8004746cUL
+#endif
+#ifndef TIOCMBIC
+#define TIOCMBIC 0x8004746bUL
+#endif
+#ifndef TIOCM_LE
+#define TIOCM_LE 0x0001
+#endif
+#ifndef TIOCM_ST
+#define TIOCM_ST 0x0008
+#endif
+#ifndef TIOCM_SR
+#define TIOCM_SR 0x0010
+#endif
+#ifndef TIOCM_CTS
+#define TIOCM_CTS 0x0020
+#endif
+#ifndef TIOCM_CAR
+#define TIOCM_CAR 0x0040
+#endif
+#ifndef TIOCM_RNG
+#define TIOCM_RNG 0x0080
+#endif
+#ifndef TIOCM_DSR
+#define TIOCM_DSR 0x0100
+#endif
+#ifndef QUAD_MAX
+#define QUAD_MAX INT64_MAX
+#define QUAD_MIN INT64_MIN
+#define UQUAD_MAX UINT64_MAX
+#endif
+#ifndef TTYDISC
+#define TTYDISC 0
+#define TABLDISC 3
+#define SLIPDISC 4
+#define PPPDDISC 5
+#define NETGRAPHDISC 6
+#endif
+#ifndef VDSUSP
+#define VDSUSP 11
+#endif
+#ifndef FSCALE
+#ifndef FSHIFT
+#define FSHIFT 11
+#endif
+#define FSCALE (1 << 11)
+struct loadavg {
+    uint32_t ldavg[3];
+    long fscale;
+};
+#endif
+struct clockinfo {
+    int hz;
+    int tick;
+    int spare;
+    int stathz;
+    int profhz;
+};
+union semun {
+    int val;
+    void *buf;
+    unsigned short *array;
+};
 #endif
 
 #if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
@@ -2163,26 +2353,6 @@ static __inline int32_t *fbsd_ucs4_dup(const int32_t *s) {
 #define wcsdup fbsd_ucs4_dup
 #endif
 #endif
-#ifndef TTYDISC
-#define TTYDISC 0
-#define TABLDISC 3
-#define SLIPDISC 4
-#define PPPDDISC 5
-#define NETGRAPHDISC 6
-#endif
-#ifndef VDSUSP
-#define VDSUSP 11
-#endif
-#ifndef FSCALE
-#ifndef FSHIFT
-#define FSHIFT 11
-#endif
-#define FSCALE (1 << 11)
-struct loadavg {
-    uint32_t ldavg[3];
-    long fscale;
-};
-#endif
 static __inline int getloadavg(double loadavg[], int nelem) {
     int i;
     for (i = 0; i < nelem; ++i) loadavg[i] = 0.0;
@@ -2208,18 +2378,6 @@ static __inline int fbsd_getsockopt_compat(SOCKET s, int level, int optname, voi
 #endif
 #endif
 #endif
-struct clockinfo {
-    int hz;
-    int tick;
-    int spare;
-    int stathz;
-    int profhz;
-};
-union semun {
-    int val;
-    void *buf;
-    unsigned short *array;
-};
 static __inline void *gethostbyname2(const char *name, int af) {
     (void)af;
     return (void *)gethostbyname(name);
@@ -2389,6 +2547,15 @@ typedef void *iconv_t;
 iconv_t iconv_open(const char *tocode, const char *fromcode);
 size_t iconv(iconv_t cd, char **inbuf, size_t *inbytesleft, char **outbuf, size_t *outbytesleft);
 int iconv_close(iconv_t cd);
+#ifdef __cplusplus
+}
+#endif
+#endif
+#endif
+#if !defined(__FreeBSD__) && !defined(__APPLE__) && !defined(ICONV_SET_DISCARD_ILSEQ)
+#ifdef __cplusplus
+extern "C" {
+#endif
 #define ICONV_GET_DISCARD_ILSEQ 3
 #define ICONV_SET_DISCARD_ILSEQ 4
 static __inline int iconvctl(iconv_t cd, int request, void *argument) {
@@ -2408,6 +2575,25 @@ static __inline void iconvlist(int (*do_one)(unsigned int, const char *const *, 
 }
 #endif
 #endif
+]=])
+
+    file(WRITE "${ARG_INC_DIR}/resolv.h" [=[#if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && defined(__has_include_next)
+#if __has_include_next(<resolv.h>)
+#include_next <resolv.h>
+#define _FBSD_NATIVE_RESOLV_H 1
+#endif
+#endif
+#ifndef _FBSD_NATIVE_RESOLV_H
+#include "posix-resolv.h"
+#endif
+#ifdef p_class
+#undef p_class
+#endif
+#if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__) || defined(__linux__)
+#undef b64_ntop
+#define b64_ntop fbsd_b64_ntop
+#undef b64_pton
+#define b64_pton fbsd_b64_pton
 #endif
 ]=])
 
@@ -2512,6 +2698,11 @@ static int userspace_get_wireguard_interfaces(struct string_list *list) {
 
     file(WRITE "${ARG_INC_DIR}/ipc-windows.h" [=[#ifndef _FBSD_WG_IPC_WINDOWS_H
 #define _FBSD_WG_IPC_WINDOWS_H 1
+#endif
+]=])
+
+    file(WRITE "${ARG_INC_DIR}/ipc-linux.h" [=[#ifndef _FBSD_WG_IPC_LINUX_H
+#define _FBSD_WG_IPC_LINUX_H 1
 #endif
 ]=])
 
@@ -2639,6 +2830,15 @@ struct tftphdr {
 #define ENOUSER   7
 #define EOPTNEG   8
 #endif
+#endif
+#ifndef MAXSEGSIZE
+#define MAXSEGSIZE 65464
+#endif
+#ifndef OACK
+#define OACK 06
+#endif
+#ifndef EOPTNEG
+#define EOPTNEG 8
 #endif
 ]=])
 
@@ -2783,6 +2983,9 @@ static __inline key_t ftok(const char *path, int id) { (void)path; return (key_t
 #include_next <sys/msg.h>
 #define _FBSD_NATIVE_SYS_MSG_H 1
 #endif
+#endif
+#ifdef msg_cbytes
+#undef msg_cbytes
 #endif
 #ifndef _FBSD_NATIVE_SYS_MSG_H
 #ifndef _FBSD_PORTABLE_SYS_MSG_H
@@ -2984,7 +3187,9 @@ static __inline void atomic_signal_fence(memory_order o) { (void)o; }
 #include <stdint.h>
 typedef int32_t __ct_rune_t;
 typedef int32_t __rune_t;
+#if !defined(_MSC_VER)
 typedef int32_t __wchar_t;
+#endif
 typedef int32_t __wint_t;
 typedef size_t __size_t;
 #endif
@@ -3482,9 +3687,12 @@ void xo_warnc(int code, const char *fmt, ...) {
 }
 #endif /* FBSD_LIBXO_MINIMAL_SHIM */
 
+#if !defined(__FreeBSD__) && !defined(__APPLE__)
+const char *_PathLocale = "/usr/share/locale";
+#endif
+
 #if defined(_WIN32) || defined(__DOS__) || defined(__WATCOMC__)
 const char *__progname = "freebsd-usr-bin";
-const char *_PathLocale = "/usr/share/locale";
 
 void osdep_uuidgen(void *uuid_ptr) {
     unsigned char *b = (unsigned char *)uuid_ptr;

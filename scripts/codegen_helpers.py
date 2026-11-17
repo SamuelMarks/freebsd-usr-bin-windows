@@ -1139,6 +1139,12 @@ def emit_all_codegen_helpers(freebsd_src: Path, generated_dir: Path) -> dict[str
             if cand.is_file():
                 dst = (vi_out / cfg_name).resolve()
                 shutil.copyfile(cand, dst)
+                if cfg_name == "config.h":
+                    dst.write_text(
+                        dst.read_text(encoding="utf-8")
+                        + f"{LF}#ifdef __linux__{LF}#undef HAVE_DIRENT_D_NAMLEN{LF}#endif{LF}",
+                        encoding="utf-8",
+                    )
                 emitted[f"codegen/vi/{cfg_name}"] = dst
 
     caps_path = freebsd_src / "contrib" / "ncurses" / "include" / "Caps"

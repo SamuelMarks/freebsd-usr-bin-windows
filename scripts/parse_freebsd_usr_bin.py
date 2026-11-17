@@ -1310,6 +1310,12 @@ def _parse_single_makefile_dir(
             inc_dirs.insert(0, str((cg_base / "libdpv").resolve()))
         if prog_name == "sed":
             extra_defs.append("FBSD_SED_BUILD=1")
+        if prog_name == "diff":
+            extra_defs.append("FBSD_DIFF_BUILD=1")
+        if prog_name == "fetch":
+            extra_defs.append("FBSD_FETCH_BUILD=1")
+        if prog_name == "bspatch":
+            extra_defs.append("FBSD_BSPATCH_BUILD=1")
         if prog_name == "bsddialog":
             extra_defs.append("FBSD_BSDDIALOG_BUILD=1")
         if prog_name == "bsdcpio":

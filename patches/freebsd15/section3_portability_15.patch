@@ -74,3 +74,26 @@
 +static const struct diff_algo_config no_algo = {
  	.impl = diff_algo_none,
  };
+--- a/usr.bin/du/du.c
++++ b/usr.bin/du/du.c
+@@ -525,7 +525,9 @@
+ {
+ 	struct ignentry *ign;
+ 
++#if !defined(__linux__)
+ 	if (nodumpflag && (ent->fts_statp->st_flags & UF_NODUMP))
+ 		return (1);
++#endif
+ 	SLIST_FOREACH(ign, &ignores, next)
+ 		if (fnmatch(ign->mask, ent->fts_name, 0) != FNM_NOMATCH)
+--- a/usr.bin/whereis/whereis.c
++++ b/usr.bin/whereis/whereis.c
+@@ -350,7 +350,7 @@
+ 			    (dirp->d_name[0] >= 'A' && dirp->d_name[0] <= 'Z') ||
+ 			    strcmp(dirp->d_name, "distfiles") == 0)
+ 				continue;
+-			if ((b = malloc(sizeof PATH_PORTS + 1 + dirp->d_namlen))
++			if ((b = malloc(sizeof PATH_PORTS + 1 + strlen(dirp->d_name)))
+ 			    == NULL)
+ 				abort();
+ 			strcpy(b, PATH_PORTS);
