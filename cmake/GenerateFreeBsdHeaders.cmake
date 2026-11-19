@@ -1053,6 +1053,9 @@ struct _nls_msg_hdr {
 };
 #endif
 #if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && defined(__has_include)
+#if __has_include(<sys/time.h>)
+#include <sys/time.h>
+#endif
 #if __has_include(<arpa/inet.h>)
 #include <arpa/inet.h>
 #endif

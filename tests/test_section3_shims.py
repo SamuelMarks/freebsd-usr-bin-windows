@@ -45,6 +45,7 @@ def test_emit_all_section3_shims_and_compile(tmp_path: Path) -> None:
     )
     assert "sys/nv.h" in sys_files
     assert "fbsd_sys.c" in sys_files
+    assert "FBSD_NEED_FALLBACK_CRYPT" in sys_files["fbsd_sys.c"].read_text(encoding="utf-8")
 
     la_files = emit_libarchive_win32_sources(tmp_path / "libarchive")
     assert "archive_windows.h" in la_files

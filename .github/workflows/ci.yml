@@ -81,6 +81,7 @@ jobs:
           mypy --strict scripts tests
           pytest --cov=scripts --cov=tests --cov-branch --cov-fail-under=100
           pre-commit run --all-files
+          test -f auto-win-msvc/bsd-dev-headers/include/elf.h
           test -z "$(git -C freebsd-src status --porcelain)"
 
   build-windows:

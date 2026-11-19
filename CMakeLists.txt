@@ -119,6 +119,14 @@ FetchContent_MakeAvailable(auto_win_msvc)
 
 set(BUILD_TESTING "${_saved_build_testing}" CACHE BOOL "" FORCE)
 
+if(NOT EXISTS "${auto_win_msvc_SOURCE_DIR}/bsd-dev-headers/include/elf.h")
+    message(FATAL_ERROR
+        "auto-win-msvc at '${auto_win_msvc_SOURCE_DIR}' is outdated "
+        "(missing bsd-dev-headers/include/elf.h and C99/glibc/Watcom portability fixes). "
+        "Commit and push the latest ../auto-win-msvc changes to SamuelMarks/auto-win-msvc."
+    )
+endif()
+
 if(EXISTS "${auto_win_msvc_SOURCE_DIR}/cmake/AutoWinMsvcTransform.cmake")
     include("${auto_win_msvc_SOURCE_DIR}/cmake/AutoWinMsvcTransform.cmake")
 endif()

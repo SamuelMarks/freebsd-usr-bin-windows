@@ -2646,6 +2646,28 @@ def emit_libsys_section3_sources(out_dir: Path) -> dict[str, Path]:
                     "int xdr_ypresp_all_seq(void *xdrs, void *objp) {"
                     " (void)xdrs; (void)objp; return 0; }"
                 ),
+                "#if defined(FBSD_NEED_FALLBACK_CRYPT)",
+                "char *crypt(const char *key, const char *salt) {",
+                "    static char out[14];",
+                "    unsigned long h = 5381UL;",
+                "    size_t i;",
+                '    const char *b64 = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"',
+                '        "abcdefghijklmnopqrstuvwxyz";',
+                "    out[0] = (salt && salt[0]) ? salt[0] : 'x';",
+                "    out[1] = (salt && salt[0] && salt[1]) ? salt[1] : 'x';",
+                "    if (key) {",
+                "        for (i = 0; key[i] != 0; i++) {",
+                "            h = ((h << 5) + h) ^ (unsigned char)key[i];",
+                "        }",
+                "    }",
+                "    for (i = 2; i < 13; i++) {",
+                "        out[i] = b64[h & 63UL];",
+                "        h = (h >> 6) ^ (h * 33UL);",
+                "    }",
+                "    out[13] = 0;",
+                "    return out;",
+                "}",
+                "#endif",
             ]
         )
         + LF
