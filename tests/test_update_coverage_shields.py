@@ -7,6 +7,7 @@ import re
 import runpy
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -115,6 +116,7 @@ def test_compute_doc_and_test_coverage(
         monkeypatch: Pytest monkeypatch fixture.
     """
     nl = chr(10)
+    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "outer.index"))
 
     def fake_interrogate_ok(
         cmd: list[str],
@@ -123,6 +125,7 @@ def test_compute_doc_and_test_coverage(
         capture_output: bool = False,
         text: bool = False,
         check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Return a simulated successful interrogate CompletedProcess.
 
@@ -132,11 +135,13 @@ def test_compute_doc_and_test_coverage(
             capture_output: Whether stdout/stderr capture was requested.
             text: Whether text mode decoding was requested.
             check: Whether non-zero exit status checking was requested.
+            env: Sanitized environment mapping passed to ``subprocess.run``.
 
         Returns:
             Simulated CompletedProcess with 100% actual coverage.
         """
         _ = (cwd, capture_output, text, check)
+        assert env is not None and "GIT_INDEX_FILE" not in env
         return subprocess.CompletedProcess(
             args=cmd,
             returncode=0,
@@ -154,6 +159,7 @@ def test_compute_doc_and_test_coverage(
         capture_output: bool = False,
         text: bool = False,
         check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Return a simulated malformed interrogate CompletedProcess.
 
@@ -163,11 +169,12 @@ def test_compute_doc_and_test_coverage(
             capture_output: Whether stdout/stderr capture was requested.
             text: Whether text mode decoding was requested.
             check: Whether non-zero exit status checking was requested.
+            env: Sanitized environment mapping passed to ``subprocess.run``.
 
         Returns:
             Simulated CompletedProcess with unparseable output.
         """
-        _ = (cwd, capture_output, text, check)
+        _ = (cwd, capture_output, text, check, env)
         return subprocess.CompletedProcess(
             args=cmd,
             returncode=1,
@@ -189,6 +196,7 @@ def test_compute_doc_and_test_coverage(
         capture_output: bool = False,
         text: bool = False,
         check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Return a simulated successful coverage report CompletedProcess.
 
@@ -198,11 +206,13 @@ def test_compute_doc_and_test_coverage(
             capture_output: Whether stdout/stderr capture was requested.
             text: Whether text mode decoding was requested.
             check: Whether non-zero exit status checking was requested.
+            env: Sanitized environment mapping passed to ``subprocess.run``.
 
         Returns:
             Simulated CompletedProcess with TOTAL 100%.
         """
         _ = (cwd, capture_output, text, check)
+        assert env is not None and "GIT_INDEX_FILE" not in env
         return subprocess.CompletedProcess(
             args=cmd,
             returncode=0,
@@ -222,6 +232,7 @@ def test_compute_doc_and_test_coverage(
         capture_output: bool = False,
         text: bool = False,
         check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Simulate coverage report without TOTAL line followed by pytest output.
 
@@ -231,11 +242,13 @@ def test_compute_doc_and_test_coverage(
             capture_output: Whether stdout/stderr capture was requested.
             text: Whether text mode decoding was requested.
             check: Whether non-zero exit status checking was requested.
+            env: Sanitized environment mapping passed to ``subprocess.run``.
 
         Returns:
             Simulated CompletedProcess for coverage or pytest.
         """
         _ = (cwd, capture_output, text, check)
+        assert env is not None and "GIT_INDEX_FILE" not in env
         calls.append(cmd)
         if "coverage" in cmd:
             return subprocess.CompletedProcess(
@@ -259,6 +272,7 @@ def test_compute_doc_and_test_coverage(
         capture_output: bool = False,
         text: bool = False,
         check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Simulate failing coverage report followed by successful pytest run.
 
@@ -268,11 +282,12 @@ def test_compute_doc_and_test_coverage(
             capture_output: Whether stdout/stderr capture was requested.
             text: Whether text mode decoding was requested.
             check: Whether non-zero exit status checking was requested.
+            env: Sanitized environment mapping passed to ``subprocess.run``.
 
         Returns:
             Simulated CompletedProcess for coverage failure or pytest success.
         """
-        _ = (cwd, capture_output, text, check)
+        _ = (cwd, capture_output, text, check, env)
         if "coverage" in cmd:
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="err")
         return subprocess.CompletedProcess(
@@ -294,6 +309,7 @@ def test_compute_doc_and_test_coverage(
         capture_output: bool = False,
         text: bool = False,
         check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Simulate malformed pytest output.
 
@@ -303,11 +319,12 @@ def test_compute_doc_and_test_coverage(
             capture_output: Whether stdout/stderr capture was requested.
             text: Whether text mode decoding was requested.
             check: Whether non-zero exit status checking was requested.
+            env: Sanitized environment mapping passed to ``subprocess.run``.
 
         Returns:
             Simulated CompletedProcess lacking a TOTAL line.
         """
-        _ = (cwd, capture_output, text, check)
+        _ = (cwd, capture_output, text, check, env)
         return subprocess.CompletedProcess(
             args=cmd, returncode=1, stdout="no coverage table", stderr=""
         )

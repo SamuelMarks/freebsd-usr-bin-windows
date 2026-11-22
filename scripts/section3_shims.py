@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from scripts.errors import write_text_if_changed
+
 LF: str = chr(10)
 BS: str = chr(92)
 
@@ -1452,7 +1454,7 @@ def emit_curses_section3_sources(out_dir: Path) -> dict[str, Path]:
         ("fbsd_curses.c", fbsd_curses_c),
     ):
         dst = (out_dir / rel_name).resolve()
-        dst.write_text(content, encoding="utf-8")
+        write_text_if_changed(dst, content)
         emitted[rel_name] = dst
     return emitted
 
@@ -1829,7 +1831,7 @@ def emit_libedit_section3_sources(out_dir: Path) -> dict[str, Path]:
         ("fbsd_edit.c", fbsd_edit_c),
     ):
         dst = (out_dir / rel_name).resolve()
-        dst.write_text(content, encoding="utf-8")
+        write_text_if_changed(dst, content)
         emitted[rel_name] = dst
     return emitted
 
@@ -1990,7 +1992,7 @@ def emit_libmp_section3_sources(out_dir: Path) -> dict[str, Path]:
 
     for rel_name, content in (("mp.h", mp_h), ("fbsd_mp.c", fbsd_mp_c)):
         dst = (out_dir / rel_name).resolve()
-        dst.write_text(content, encoding="utf-8")
+        write_text_if_changed(dst, content)
         emitted[rel_name] = dst
     return emitted
 
@@ -2689,7 +2691,7 @@ def emit_libsys_section3_sources(out_dir: Path) -> dict[str, Path]:
         ("fbsd_sys.c", fbsd_sys_c),
     ):
         dst = (out_dir / rel_name).resolve()
-        dst.write_text(content, encoding="utf-8")
+        write_text_if_changed(dst, content)
         emitted[rel_name] = dst
     return emitted
 
@@ -2955,7 +2957,7 @@ def emit_libarchive_win32_sources(out_dir: Path) -> dict[str, Path]:
         ("fbsd_libarchive_win32.c", archive_win_c),
     ):
         dst = (out_dir / rel_name).resolve()
-        dst.write_text(content, encoding="utf-8")
+        write_text_if_changed(dst, content)
         emitted[rel_name] = dst
     return emitted
 
@@ -3242,6 +3244,6 @@ def emit_libdialog_section3_sources(dialog_dir: Path) -> dict[str, Path]:
         ("fbsd_dialog.c", fbsd_dialog_c),
     ):
         dst = (dialog_dir / rel_name).resolve()
-        dst.write_text(content, encoding="utf-8")
+        write_text_if_changed(dst, content)
         emitted[rel_name] = dst
     return emitted

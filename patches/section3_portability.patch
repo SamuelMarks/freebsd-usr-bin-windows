@@ -1273,3 +1273,24 @@
  		}
  		else {
  			strcpy(fname, _PATH_TMP);
+--- a/contrib/com_err/compile_et.c
++++ b/contrib/com_err/compile_et.c
+@@ -45,7 +45,7 @@
+ int numerror;
+ extern FILE *yyin;
+ 
+-extern void yyparse(void);
++extern int yyparse(void);
+ 
+ long base_id;
+ int number;
+@@ -55,7 +55,7 @@
+ char name[128];
+ char Basename[128];
+ 
+-#ifdef YYDEBUG
++#if defined(YYDEBUG) && YYDEBUG
+ extern int yydebug = 1;
+ #endif
+ 
+

@@ -38,6 +38,11 @@ Functions and Macros
   Recursively parses a FreeBSD ``Makefile`` and quoted ``.include`` directives
   to populate ``PROG``, ``PROG_CXX``, ``PROGS``, and ``LINKS`` variables.
 
+``freebsd_write_var_if_different(<file_path> <content_var>)``
+  Writes the text stored in caller variable ``<content_var>`` to ``<file_path>``
+  only when missing or byte-different on disk so incremental CMake
+  re-configurations preserve modification timestamps.
+
 ``freebsd_emit_compat_headers(INC_DIR <dir> [FREEBSD_SRC_DIR <dir>] [OUT_HEADERS_VAR <var>])``
   Generates ``osreldate.h``, ``pathnames.h``, ``libxo/xo.h``, and
   ``freebsd_compat_preinclude.h`` under ``<dir>``.
@@ -55,9 +60,10 @@ Functions and Macros
   ``src/freebsd_multicall_main.c``, ``freebsd_usr_bin_targets.cmake``, and
   ``enabled_sources.cmake``.
 
-``freebsd_generate_all(FREEBSD_SRC_DIR <dir> OUT_DIR <dir>)``
+``freebsd_generate_all(FREEBSD_SRC_DIR <dir> OUT_DIR <dir> [SKIP_MULTICALL])``
   Executes the complete FreeBSD ``usr.bin`` header, shim, manifest, and
-  multicall C code generation pipeline.
+  multicall C code generation pipeline (skipping multicall C wrapper emission
+  when ``SKIP_MULTICALL`` is specified).
 
 Script Mode Variables
 ^^^^^^^^^^^^^^^^^^^^^
@@ -302,6 +308,31 @@ macro(_freebsd_parse_makefile_impl MK_PATH CURDIR ENV_PREFIX VISITED_VAR)
 endmacro()
 
 # -----------------------------------------------------------------------------
+# freebsd_write_var_if_different(<file_path> <content_var>)
+#
+# Write the text stored in caller variable <content_var> to <file_path> only
+# when missing or different on disk so incremental CMake re-configurations
+# preserve modification timestamps without function-argument escape parsing.
+#
+# Arguments:
+#   _fbsd_out_path    - Destination filesystem path to create or update.
+#   _fbsd_content_var - Name of variable in caller scope holding file text.
+# -----------------------------------------------------------------------------
+function(freebsd_write_var_if_different _fbsd_out_path _fbsd_content_var)
+    if(EXISTS "${_fbsd_out_path}")
+        file(READ "${_fbsd_out_path}" _fbsd_existing_content)
+        if("${_fbsd_existing_content}" STREQUAL "${${_fbsd_content_var}}")
+            return()
+        endif()
+    endif()
+    get_filename_component(_fbsd_out_dir "${_fbsd_out_path}" DIRECTORY)
+    if(_fbsd_out_dir)
+        file(MAKE_DIRECTORY "${_fbsd_out_dir}")
+    endif()
+    file(WRITE "${_fbsd_out_path}" "${${_fbsd_content_var}}")
+endfunction()
+
+# -----------------------------------------------------------------------------
 # freebsd_emit_compat_headers(
 #   INC_DIR <dir>
 #   [FREEBSD_SRC_DIR <dir>]
@@ -347,7 +378,7 @@ function(freebsd_emit_compat_headers)
 #endif
 ]=])
     set(_osreldate_path "${ARG_INC_DIR}/osreldate.h")
-    file(WRITE "${_osreldate_path}" "${_osreldate_h}")
+    freebsd_write_var_if_different("${_osreldate_path}" _osreldate_h)
 
     set(_pathnames_h [=[#ifndef _FREEBSD_USR_BIN_PATHNAMES_H_
 #define _FREEBSD_USR_BIN_PATHNAMES_H_
@@ -360,7 +391,7 @@ function(freebsd_emit_compat_headers)
 #endif
 ]=])
     set(_pathnames_path "${ARG_INC_DIR}/pathnames.h")
-    file(WRITE "${_pathnames_path}" "${_pathnames_h}")
+    freebsd_write_var_if_different("${_pathnames_path}" _pathnames_h)
 
     set(_libxo_path "${ARG_INC_DIR}/libxo/xo.h")
     if(ARG_FREEBSD_SRC_DIR AND EXISTS "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo.h")
@@ -390,11 +421,11 @@ function(freebsd_emit_compat_headers)
             _xo_h_c89 "${_xo_dll_hdr}${_xo_h_c89}"
         )
         file(MAKE_DIRECTORY "${ARG_INC_DIR}/libxo")
-        file(WRITE "${_libxo_path}" "${_xo_h_c89}")
+        freebsd_write_var_if_different("${_libxo_path}" _xo_h_c89)
         if(EXISTS "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo_encoder.h")
             file(READ "${ARG_FREEBSD_SRC_DIR}/contrib/libxo/libxo/xo_encoder.h" _xo_enc_raw)
-            set(_xo_enc_hdr "#ifndef XO_ENCODERDIR\n#define XO_ENCODERDIR \"/usr/lib/libxo/encoder\"\n#endif\n")
-            file(WRITE "${ARG_INC_DIR}/libxo/xo_encoder.h" "${_xo_enc_hdr}${_xo_enc_raw}")
+            set(_xo_enc_full "#ifndef XO_ENCODERDIR\n#define XO_ENCODERDIR \"/usr/lib/libxo/encoder\"\n#endif\n${_xo_enc_raw}")
+            freebsd_write_var_if_different("${ARG_INC_DIR}/libxo/xo_encoder.h" _xo_enc_full)
         endif()
     else()
         set(_libxo_h [=[#ifndef _LIBXO_XO_H_
@@ -439,11 +470,14 @@ void xo_warnx(const char *fmt, ...);
 void xo_warnc(int code, const char *fmt, ...);
 #endif
 ]=])
-        file(WRITE "${_libxo_path}" "${_libxo_h}")
+        freebsd_write_var_if_different("${_libxo_path}" _libxo_h)
     endif()
 
     set(_preinclude_h [=[#ifndef FREEBSD_COMPAT_PREINCLUDE_H_
 #define FREEBSD_COMPAT_PREINCLUDE_H_
+#if defined(__WATCOMC__) && !defined(STANDALONE_SMALL)
+#define STANDALONE_SMALL 1
+#endif
 #if defined(__clang__) && defined(_MSC_VER)
 #ifdef __attribute__
 #undef __attribute__
@@ -1181,7 +1215,11 @@ int fbsd_b64_pton(const char *src, unsigned char *target, size_t targsize);
 #undef b64_pton
 #define b64_pton fbsd_b64_pton
 #endif
+#if defined(__WATCOMC__) && defined(_M_I86)
+static __inline int getosreldate(void) { return 15000; }
+#else
 static __inline int getosreldate(void) { return 1500000; }
+#endif
 #if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__)
 #undef O_BINARY
 #define O_BINARY 0
@@ -1289,7 +1327,7 @@ static __inline int getentropy(void *buf, size_t len) {
 #define SEM_ALLOC 01000
 #endif
 #ifndef IXSEQ_TO_IPCID
-#define IXSEQ_TO_IPCID(ix, perm) ((int)(((unsigned int)(perm).seq << 16) | (unsigned int)(ix)))
+#define IXSEQ_TO_IPCID(ix, perm) ((int)((((unsigned long)(perm).seq) << 16) | (unsigned long)(ix)))
 #endif
 #if !defined(__FreeBSD__)
 struct fbsd_ipc_perm {
@@ -1705,6 +1743,7 @@ static __inline int fbsd_putw_compat(int v, FILE *fp) {
 #ifndef sigmask
 #define sigmask(m) (1 << ((m) - 1))
 #endif
+#include <locale.h>
 #ifndef LC_MESSAGES
 #define LC_MESSAGES LC_ALL
 #endif
@@ -2210,10 +2249,10 @@ static __inline struct in_addr inet_makeaddr(uint32_t net, uint32_t host) {
 static __inline uint32_t inet_network(const char *cp) {
     unsigned int b0 = 0, b1 = 0, b2 = 0, b3 = 0;
     int n = cp ? sscanf(cp, "%u.%u.%u.%u", &b0, &b1, &b2, &b3) : 0;
-    if (n == 1) return b0;
-    if (n == 2) return (b0 << 8) | b1;
-    if (n == 3) return (b0 << 16) | (b1 << 8) | b2;
-    if (n == 4) return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+    if (n == 1) return (uint32_t)b0;
+    if (n == 2) return ((uint32_t)b0 << 8) | (uint32_t)b1;
+    if (n == 3) return ((uint32_t)b0 << 16) | ((uint32_t)b1 << 8) | (uint32_t)b2;
+    if (n == 4) return ((uint32_t)b0 << 24) | ((uint32_t)b1 << 16) | ((uint32_t)b2 << 8) | (uint32_t)b3;
     return 0xffffffffU;
 }
 static __inline void setnetgrent(const char *netgroup) { (void)netgroup; }
@@ -2526,12 +2565,54 @@ static __inline FILE *open_memstream(char **bufp, size_t *sizep) {
 ]=])
     string(CONFIGURE "${_preinclude_h}" _preinclude_h @ONLY)
     set(_preinclude_path "${ARG_INC_DIR}/freebsd_compat_preinclude.h")
-    file(WRITE "${_preinclude_path}" "${_preinclude_h}")
+    freebsd_write_var_if_different("${_preinclude_path}" _preinclude_h)
 
     file(MAKE_DIRECTORY "${ARG_INC_DIR}/arpa")
+    file(MAKE_DIRECTORY "${ARG_INC_DIR}/bits")
     file(MAKE_DIRECTORY "${ARG_INC_DIR}/netinet")
     file(MAKE_DIRECTORY "${ARG_INC_DIR}/protocols")
     file(MAKE_DIRECTORY "${ARG_INC_DIR}/sys")
+
+    file(SHA256 "${CMAKE_CURRENT_FUNCTION_LIST_FILE}" _fbsd_gen_hdr_sha)
+    set(_fbsd_hdr_stamp "${ARG_INC_DIR}/.compat_headers_sha256")
+    set(_fbsd_existing_sha "")
+    if(EXISTS "${_fbsd_hdr_stamp}" AND EXISTS "${ARG_INC_DIR}/sys/ktr.h")
+        file(READ "${_fbsd_hdr_stamp}" _fbsd_existing_sha)
+        string(STRIP "${_fbsd_existing_sha}" _fbsd_existing_sha)
+    endif()
+
+    if(NOT "${_fbsd_existing_sha}" STREQUAL "${_fbsd_gen_hdr_sha}")
+    file(WRITE "${ARG_INC_DIR}/bits/struct_mutex.h" [=[#if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && defined(__has_include_next)
+#if __has_include_next(<bits/struct_mutex.h>)
+#if (defined(__GLIBC__) || defined(__linux__)) && defined(__unused)
+#pragma push_macro("__unused")
+#undef __unused
+#pragma GCC system_header
+#include_next <bits/struct_mutex.h>
+#pragma pop_macro("__unused")
+#else
+#pragma GCC system_header
+#include_next <bits/struct_mutex.h>
+#endif
+#endif
+#endif
+]=])
+
+    file(WRITE "${ARG_INC_DIR}/bits/struct_rwlock.h" [=[#if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && defined(__has_include_next)
+#if __has_include_next(<bits/struct_rwlock.h>)
+#if (defined(__GLIBC__) || defined(__linux__)) && defined(__unused)
+#pragma push_macro("__unused")
+#undef __unused
+#pragma GCC system_header
+#include_next <bits/struct_rwlock.h>
+#pragma pop_macro("__unused")
+#else
+#pragma GCC system_header
+#include_next <bits/struct_rwlock.h>
+#endif
+#endif
+#endif
+]=])
 
     file(WRITE "${ARG_INC_DIR}/iconv.h" [=[#if !defined(_WIN32) && !defined(__DOS__) && !defined(__WATCOMC__) && defined(__has_include_next)
 #if __has_include_next(<iconv.h>)
@@ -3256,6 +3337,8 @@ struct ktr_entry {
 };
 #endif
 ]=])
+    file(WRITE "${_fbsd_hdr_stamp}" "${_fbsd_gen_hdr_sha}\n")
+    endif()
 
     if(ARG_OUT_HEADERS_VAR)
         set(${ARG_OUT_HEADERS_VAR}
@@ -3700,10 +3783,10 @@ const char *__progname = "freebsd-usr-bin";
 void osdep_uuidgen(void *uuid_ptr) {
     unsigned char *b = (unsigned char *)uuid_ptr;
     size_t i;
-    unsigned int seed = (unsigned int)rand() ^ 0x9e3779b9U;
+    unsigned long seed = (unsigned long)rand() ^ 0x9e3779b9UL;
     if (b == NULL) return;
     for (i = 0; i < 16; ++i) {
-        seed = seed * 1664525U + 1013904223U;
+        seed = seed * 1664525UL + 1013904223UL;
         b[i] = (unsigned char)(seed >> 16);
     }
     b[6] = (unsigned char)((b[6] & 0x0fU) | 0x40U);
@@ -3741,7 +3824,7 @@ int sockaddr_snprintf(char *buf, size_t len, const char *fmt, const struct socka
 
 ]=])
     string(CONFIGURE "${_libcompat_tpl}" _libcompat_c @ONLY)
-    file(WRITE "${_out_file}" "${_libcompat_c}")
+    freebsd_write_var_if_different("${_out_file}" _libcompat_c)
 
     if(ARG_OUT_FILE_VAR)
         set(${ARG_OUT_FILE_VAR} "${_out_file}" PARENT_SCOPE)
@@ -3944,11 +4027,11 @@ function(freebsd_emit_multicall_applets_and_dispatcher)
         if(NOT _direct_idx EQUAL -1 AND EXISTS "${_direct_src}" AND NOT IS_DIRECTORY "${_direct_src}")
             file(READ "${_direct_src}" _raw_c)
             freebsd_transform_applet_source(_raw_c "${_safe_id}" _wrapped_c)
-            file(WRITE "${_out_c}" "${_wrapped_c}")
+            freebsd_write_var_if_different("${_out_c}" _wrapped_c)
         elseif(EXISTS "${_out_real}/dispatchers/${_d_name}_main.c")
             file(READ "${_out_real}/dispatchers/${_d_name}_main.c" _raw_c)
             freebsd_transform_applet_source(_raw_c "${_safe_id}" _wrapped_c)
-            file(WRITE "${_out_c}" "${_wrapped_c}")
+            freebsd_write_var_if_different("${_out_c}" _wrapped_c)
         else()
             set(_stub_tpl [=[#include <stdio.h>
 #include <stdlib.h>
@@ -3965,7 +4048,7 @@ int @_fn_name@(int argc, char *argv[]) {
 }
 ]=])
             string(CONFIGURE "${_stub_tpl}" _stub_c @ONLY)
-            file(WRITE "${_out_c}" "${_stub_c}")
+            freebsd_write_var_if_different("${_out_c}" _stub_c)
         endif()
 
         list(APPEND _applet_files "${_out_c}")
@@ -4097,7 +4180,7 @@ int main(int argc, char *argv[]) {
     string(APPEND _mc_text "${_mc_tail}")
 
     set(_multicall_main "${_src_real}/freebsd_multicall_main.c")
-    file(WRITE "${_multicall_main}" "${_mc_text}")
+    freebsd_write_var_if_different("${_multicall_main}" _mc_text)
 
     set(_targets_cmake "# Automatically generated by cmake/GenerateFreeBsdHeaders.cmake${_FBSD_NL}")
     string(APPEND _targets_cmake
@@ -4109,7 +4192,7 @@ int main(int argc, char *argv[]) {
         string(APPEND _targets_cmake "    ${_FBSD_DQ}${_d_name}${_FBSD_DQ}${_FBSD_NL}")
     endforeach()
     string(APPEND _targets_cmake ")${_FBSD_NL}${_targets_meta}")
-    file(WRITE "${_out_real}/freebsd_usr_bin_targets.cmake" "${_targets_cmake}")
+    freebsd_write_var_if_different("${_out_real}/freebsd_usr_bin_targets.cmake" _targets_cmake)
 
     set(_all_sources
         "${_src_real}/freebsd_libcompat.c"
@@ -4122,13 +4205,14 @@ int main(int argc, char *argv[]) {
         string(APPEND _enabled_cmake "    ${_FBSD_DQ}${_src_posix}${_FBSD_DQ}${_FBSD_NL}")
     endforeach()
     string(APPEND _enabled_cmake ")${_FBSD_NL}")
-    file(WRITE "${_out_real}/enabled_sources.cmake" "${_enabled_cmake}")
+    freebsd_write_var_if_different("${_out_real}/enabled_sources.cmake" _enabled_cmake)
 endfunction()
 
 # -----------------------------------------------------------------------------
 # freebsd_generate_all(
 #   FREEBSD_SRC_DIR <dir>
 #   OUT_DIR <dir>
+#   [SKIP_MULTICALL]
 # )
 #
 # Run the complete FreeBSD usr.bin compatibility header, libcompat C shim,
@@ -4137,9 +4221,11 @@ endfunction()
 # Arguments:
 #   FREEBSD_SRC_DIR - Path to upstream freebsd-src root directory.
 #   OUT_DIR         - Destination directory for generated headers and sources.
+#   SKIP_MULTICALL  - Optional flag skipping multicall C wrapper emission when
+#                     FREEBSD_BUILD_MULTICALL is inactive.
 # -----------------------------------------------------------------------------
 function(freebsd_generate_all)
-    set(_options "")
+    set(_options SKIP_MULTICALL)
     set(_one_value_args FREEBSD_SRC_DIR OUT_DIR)
     set(_multi_value_args "")
     cmake_parse_arguments(ARG "${_options}" "${_one_value_args}" "${_multi_value_args}" ${ARGN})
@@ -4195,10 +4281,39 @@ function(freebsd_generate_all)
     freebsd_emit_libcompat_c(
         SRC_DIR "${_out_abs}/src"
     )
-    freebsd_emit_multicall_applets_and_dispatcher(
-        FREEBSD_SRC_DIR "${_src_abs}"
-        OUT_DIR "${_out_abs}"
-    )
+    if(ARG_SKIP_MULTICALL)
+        file(GLOB _all_entries RELATIVE "${_src_abs}/usr.bin" "${_src_abs}/usr.bin/*")
+        list(SORT _all_entries)
+        set(_top_mk_count 0)
+        set(_subdirs "")
+        foreach(_ent IN LISTS _all_entries)
+            if(IS_DIRECTORY "${_src_abs}/usr.bin/${_ent}")
+                list(APPEND _subdirs "${_ent}")
+            else()
+                math(EXPR _top_mk_count "${_top_mk_count} + 1")
+            endif()
+        endforeach()
+        list(LENGTH _subdirs _subdir_count)
+        math(EXPR _total_entries "${_top_mk_count} + ${_subdir_count}")
+        set(_targets_cmake "# Automatically generated by cmake/GenerateFreeBsdHeaders.cmake${_FBSD_NL}")
+        string(APPEND _targets_cmake
+            "set(FREEBSD_USR_BIN_TOTAL_ENTRIES ${_total_entries})${_FBSD_NL}"
+            "set(FREEBSD_USR_BIN_UTILITY_COUNT ${_subdir_count})${_FBSD_NL}"
+            "set(FREEBSD_USR_BIN_UTILITIES${_FBSD_NL}"
+        )
+        foreach(_d_name IN LISTS _subdirs)
+            string(APPEND _targets_cmake "    ${_FBSD_DQ}${_d_name}${_FBSD_DQ}${_FBSD_NL}")
+        endforeach()
+        string(APPEND _targets_cmake ")${_FBSD_NL}")
+        freebsd_write_var_if_different("${_out_abs}/freebsd_usr_bin_targets.cmake" _targets_cmake)
+        set(_empty_enabled_cmake "# Automatically generated by cmake/GenerateFreeBsdHeaders.cmake${_FBSD_NL}set(FREEBSD_MULTICALL_SOURCES)${_FBSD_NL}")
+        freebsd_write_var_if_different("${_out_abs}/enabled_sources.cmake" _empty_enabled_cmake)
+    else()
+        freebsd_emit_multicall_applets_and_dispatcher(
+            FREEBSD_SRC_DIR "${_src_abs}"
+            OUT_DIR "${_out_abs}"
+        )
+    endif()
 endfunction()
 
 # -----------------------------------------------------------------------------

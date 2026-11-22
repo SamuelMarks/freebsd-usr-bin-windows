@@ -49,15 +49,38 @@ option(FREEBSD_SECTION3_SHARED "Build FreeBSD Section 3 backing libraries as SHA
 option(FREEBSD_USR_BIN_BUILD_CLANG "Compile full contrib/llvm-project 43-tool usr.bin/clang subtree" OFF)
 option(FREEBSD_USR_BIN_BUILD_OFED "Compile full contrib/ofed InfiniBand usr.bin/ofed subtree" OFF)
 option(FREEBSD_USR_BIN_BUILD_KYUA "Compile full contrib/kyua C++20 usr.bin/kyua subtree" OFF)
+option(FREEBSD_DOS_FULL_SUITE "Build full 130+ DOS binary and multicall suite even when BUILD_TESTING=ON" OFF)
 
 # -----------------------------------------------------------------------------
-# 1. Detect OpenWatcom / 32-bit Protected-Mode DOS Target
+# 1. Detect OpenWatcom / 16-bit Real-Mode (I86) & 32-bit Protected-Mode (I386) DOS
 # -----------------------------------------------------------------------------
 set(FREEBSD_TARGET_DOS OFF)
+set(FREEBSD_DOS_I86 OFF)
 if(WATCOM OR CMAKE_SYSTEM_NAME STREQUAL "DOS" OR CMAKE_C_COMPILER_ID MATCHES "Watcom")
     set(FREEBSD_TARGET_DOS ON)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "Disable shared libraries on DOS" FORCE)
     set(FREEBSD_SECTION3_SHARED OFF CACHE BOOL "Static Section 3 libraries on DOS" FORCE)
+    get_filename_component(_fbsd_ow_cc_name "${CMAKE_C_COMPILER}" NAME)
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "I86"
+       OR CMAKE_SIZEOF_VOID_P EQUAL 2
+       OR _fbsd_ow_cc_name MATCHES "^wcl(\\.exe)?$")
+        set(FREEBSD_DOS_I86 ON)
+        string(REGEX REPLACE "(^| )-m[smchf]( |$)" "\\1-ml\\2" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+        string(REGEX REPLACE "(^| )-zt=[0-9]+( |$)" "\\1\\2" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+        if(NOT CMAKE_C_FLAGS MATCHES "(^| )-ml( |$)")
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ml")
+        endif()
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -zm -zc -zt=32 -os -d0")
+    else()
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -zm -zc -os -d0")
+    endif()
+    string(REPLACE "-d2" "-d0" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+    string(REPLACE "-od" "-os" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+    string(REPLACE "debug all" "" CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG}")
+    if(NOT CMAKE_EXE_LINKER_FLAGS MATCHES "eliminate")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} option eliminate")
+    endif()
+    unset(_fbsd_ow_cc_name)
 else()
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
@@ -97,23 +120,57 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_RAND_S)
 endif()
 
-if(NOT DEFINED FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC)
+option(FREEBSD_AUTO_WIN_MSVC_PREFER_LOCAL
+    "Use sibling ../auto-win-msvc or ./auto-win-msvc checkout when present" ON)
+if(NOT FREEBSD_AUTO_WIN_MSVC_PREFER_LOCAL AND _FBSD_AUTO_DETECTED_AWM)
+    unset(FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC CACHE)
+    unset(FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC)
+    unset(_FBSD_AUTO_DETECTED_AWM CACHE)
+endif()
+if(FREEBSD_AUTO_WIN_MSVC_PREFER_LOCAL AND "${FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC}" STREQUAL "")
     foreach(_awm_cand
         "${CMAKE_CURRENT_SOURCE_DIR}/../auto-win-msvc"
         "${CMAKE_CURRENT_SOURCE_DIR}/auto-win-msvc"
     )
         if(EXISTS "${_awm_cand}/CMakeLists.txt")
             get_filename_component(_awm_abs "${_awm_cand}" ABSOLUTE)
-            set(FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC "${_awm_abs}" CACHE PATH "Local auto-win-msvc" FORCE)
+            set(FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC "${_awm_abs}")
+            set(_FBSD_AUTO_DETECTED_AWM ON CACHE INTERNAL "Auto-detected local auto-win-msvc")
             break()
         endif()
     endforeach()
 endif()
 
+set(FETCHCONTENT_UPDATES_DISCONNECTED_AUTO_WIN_MSVC OFF CACHE BOOL
+    "Always fetch latest master for auto_win_msvc" FORCE)
+file(REMOVE "${CMAKE_BINARY_DIR}/CMakeFiles/fc-stamp/auto_win_msvc/update.stamp")
+foreach(_fbsd_git_env
+    GIT_ALTERNATE_OBJECT_DIRECTORIES
+    GIT_COMMON_DIR
+    GIT_CONFIG
+    GIT_CONFIG_COUNT
+    GIT_CONFIG_PARAMETERS
+    GIT_DIR
+    GIT_GRAFT_FILE
+    GIT_IMPLICIT_WORK_TREE
+    GIT_INDEX_FILE
+    GIT_NAMESPACE
+    GIT_NO_REPLACE_OBJECTS
+    GIT_OBJECT_DIRECTORY
+    GIT_PREFIX
+    GIT_REPLACE_REF_BASE
+    GIT_SHALLOW_FILE
+    GIT_SUPER_PREFIX
+    GIT_WORK_TREE
+)
+    unset(ENV{${_fbsd_git_env}})
+endforeach()
+unset(_fbsd_git_env)
 FetchContent_Declare(
     auto_win_msvc
     GIT_REPOSITORY https://github.com/SamuelMarks/auto-win-msvc.git
     GIT_TAG master
+    GIT_REMOTE_UPDATE_STRATEGY CHECKOUT
 )
 FetchContent_MakeAvailable(auto_win_msvc)
 
@@ -141,9 +198,19 @@ set(FREEBSD_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/freebsd_generated")
 set(FREEBSD_GEN_INC "${FREEBSD_GEN_DIR}/include")
 set(AWM_POSIX_INCLUDES "${CMAKE_CURRENT_BINARY_DIR}/posix_includes")
 
+set(_fbsd_build_multicall_active "${FREEBSD_BUILD_MULTICALL}")
+if(FREEBSD_TARGET_DOS AND (FREEBSD_DOS_I86 OR (BUILD_TESTING AND NOT FREEBSD_DOS_FULL_SUITE)))
+    set(_fbsd_build_multicall_active OFF)
+endif()
+set(_fbsd_gen_extra_args "")
+if(NOT _fbsd_build_multicall_active)
+    list(APPEND _fbsd_gen_extra_args SKIP_MULTICALL)
+endif()
+
 freebsd_generate_all(
     FREEBSD_SRC_DIR "${FREEBSD_SRC_DIR}"
     OUT_DIR "${FREEBSD_GEN_DIR}"
+    ${_fbsd_gen_extra_args}
 )
 
 include("${FREEBSD_GEN_DIR}/freebsd_usr_bin_targets.cmake")
@@ -206,7 +273,7 @@ if(EXISTS "${_LC_AWM_CFG}" AND EXISTS "${_LC_PREINC}")
             "-wcd=202"
         )
     elseif(MSVC)
-        target_compile_options(fbsd_libcompat PRIVATE "/FI${_LC_AWM_CFG}" "/FI${_LC_PREINC}" "/wd4005" "/wd4244" "/wd4267" "/wd4996")
+        target_compile_options(fbsd_libcompat PRIVATE "/FI${_LC_AWM_CFG}" "/FI${_LC_PREINC}" "/wd4005" "/wd4244" "/wd4267" "/wd4716" "/wd4996")
     else()
         target_compile_options(fbsd_libcompat PRIVATE
             "SHELL:-include ${_LC_AWM_CFG}"
@@ -218,6 +285,16 @@ if(EXISTS "${_LC_AWM_CFG}" AND EXISTS "${_LC_PREINC}")
 endif()
 target_link_libraries(fbsd_libcompat PUBLIC auto-win-msvc)
 
+if(FREEBSD_TARGET_DOS AND (FREEBSD_DOS_I86 OR (BUILD_TESTING AND NOT FREEBSD_DOS_FULL_SUITE)))
+    if(NOT DEFINED FREEBSD_REQUIRED_SECTION3_LIBS)
+        if(FREEBSD_DOS_I86)
+            set(FREEBSD_REQUIRED_SECTION3_LIBS "fbsd_libutil")
+        else()
+            set(FREEBSD_REQUIRED_SECTION3_LIBS "fbsd_libutil;fbsd_libxo;fbsd_libbz2")
+        endif()
+    endif()
+endif()
+
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/FreeBsdInternalLibs.cmake")
 
 # -----------------------------------------------------------------------------
@@ -225,7 +302,17 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/FreeBsdInternalLibs.cmake")
 # -----------------------------------------------------------------------------
 if(FREEBSD_BUILD_INDIVIDUAL AND EXISTS "${FREEBSD_GEN_DIR}/per_binary_subdirs.cmake")
     if(NOT DEFINED FREEBSD_ENABLED_BINARIES)
-        if(FREEBSD_TARGET_DOS OR NOT (FREEBSD_HOST_YACC AND FREEBSD_HOST_LEX))
+        if(FREEBSD_TARGET_DOS AND (FREEBSD_DOS_I86 OR (BUILD_TESTING AND NOT FREEBSD_DOS_FULL_SUITE)))
+            if(FREEBSD_DOS_I86)
+                set(FREEBSD_ENABLED_BINARIES
+                    true basename dirname jot pagesize printf seq uname
+                )
+            else()
+                set(FREEBSD_ENABLED_BINARIES
+                    true basename dirname jot pagesize printf seq uname xo bzip2
+                )
+            endif()
+        elseif(FREEBSD_TARGET_DOS OR NOT (FREEBSD_HOST_YACC AND FREEBSD_HOST_LEX))
             set(FREEBSD_ENABLED_BINARIES
                 ${FREEBSD_NATIVE_DIRECT_APPLETS}
                 addr2line alias backlight biff bintrans bomtool brandelf
@@ -250,7 +337,7 @@ endif()
 # -----------------------------------------------------------------------------
 # 7. Define freebsd-usr-bin Multicall Executable Target
 # -----------------------------------------------------------------------------
-if(FREEBSD_BUILD_MULTICALL)
+if(_fbsd_build_multicall_active)
     set(FREEBSD_ACTIVE_SOURCES ${FREEBSD_MULTICALL_SOURCES})
 
     if(COMMAND auto_win_msvc_transform_sources AND (MSVC OR FREEBSD_TARGET_DOS))
@@ -310,7 +397,7 @@ if(FREEBSD_BUILD_MULTICALL)
             "/FI${AWM_POSIX_INCLUDES}/auto-win-msvc-configure.h"
             "/FI${FREEBSD_GEN_INC}/freebsd_compat_preinclude.h"
             "/wd4005" "/wd4018" "/wd4100" "/wd4127" "/wd4146"
-            "/wd4244" "/wd4267" "/wd4389" "/wd4706" "/wd4996"
+            "/wd4244" "/wd4267" "/wd4389" "/wd4706" "/wd4716" "/wd4996"
         )
         target_link_options(freebsd-usr-bin PRIVATE "/STACK:8388608")
     else()
@@ -361,7 +448,103 @@ include(CPack)
 # 9. CTest Functional Verification Suite (Multicall + Per-Binary + Section 3)
 # -----------------------------------------------------------------------------
 include(CTest)
-if(BUILD_TESTING AND NOT FREEBSD_TARGET_DOS)
+if(BUILD_TESTING AND FREEBSD_TARGET_DOS)
+    enable_testing()
+
+    if(TARGET fbsd_bin_true)
+        add_test(NAME dos_usr_bin_true COMMAND fbsd_bin_true)
+    endif()
+
+    if(TARGET fbsd_bin_basename)
+        add_test(
+            NAME dos_usr_bin_basename
+            COMMAND fbsd_bin_basename usr/local/bin/example.c .c
+        )
+        set_tests_properties(dos_usr_bin_basename PROPERTIES
+            PASS_REGULAR_EXPRESSION "example"
+        )
+    endif()
+
+    if(TARGET fbsd_bin_dirname)
+        add_test(
+            NAME dos_usr_bin_dirname
+            COMMAND fbsd_bin_dirname usr/local/bin/example.c
+        )
+        set_tests_properties(dos_usr_bin_dirname PROPERTIES
+            PASS_REGULAR_EXPRESSION "usr.*local.*bin"
+        )
+    endif()
+
+    if(TARGET fbsd_bin_printf)
+        add_test(
+            NAME dos_usr_bin_printf
+            COMMAND fbsd_bin_printf %s:%x hex 255
+        )
+        set_tests_properties(dos_usr_bin_printf PROPERTIES
+            PASS_REGULAR_EXPRESSION "hex:ff"
+        )
+    endif()
+
+    if(TARGET fbsd_bin_seq)
+        add_test(
+            NAME dos_usr_bin_seq
+            COMMAND fbsd_bin_seq 1 5
+        )
+        set_tests_properties(dos_usr_bin_seq PROPERTIES
+            PASS_REGULAR_EXPRESSION "1.*2.*3.*4.*5"
+        )
+    endif()
+
+    if(TARGET fbsd_bin_jot)
+        add_test(
+            NAME dos_usr_bin_jot
+            COMMAND fbsd_bin_jot 4 10
+        )
+        set_tests_properties(dos_usr_bin_jot PROPERTIES
+            PASS_REGULAR_EXPRESSION "10.*11.*12.*13"
+        )
+    endif()
+
+    if(TARGET fbsd_bin_pagesize)
+        add_test(
+            NAME dos_usr_bin_pagesize
+            COMMAND fbsd_bin_pagesize
+        )
+        set_tests_properties(dos_usr_bin_pagesize PROPERTIES
+            PASS_REGULAR_EXPRESSION "(4096|8192|16384|65536)"
+        )
+    endif()
+
+    if(TARGET fbsd_bin_uname)
+        add_test(
+            NAME dos_usr_bin_uname
+            COMMAND fbsd_bin_uname -s
+        )
+        set_tests_properties(dos_usr_bin_uname PROPERTIES
+            PASS_REGULAR_EXPRESSION "[A-Za-z]+"
+        )
+    endif()
+
+    if(TARGET fbsd_bin_xo)
+        add_test(
+            NAME dos_usr_bin_xo_libxo_json
+            COMMAND fbsd_bin_xo --json {:status/%s} ok
+        )
+        set_tests_properties(dos_usr_bin_xo_libxo_json PROPERTIES
+            PASS_REGULAR_EXPRESSION [=["status":"ok"]=]
+        )
+    endif()
+
+    if(TARGET fbsd_bin_bzip2)
+        add_test(
+            NAME dos_usr_bin_bzip2_section3
+            COMMAND fbsd_bin_bzip2 --help
+        )
+        set_tests_properties(dos_usr_bin_bzip2_section3 PROPERTIES
+            PASS_REGULAR_EXPRESSION "bzip2"
+        )
+    endif()
+elseif(BUILD_TESTING AND NOT FREEBSD_TARGET_DOS)
     enable_testing()
 
     set(_test_runner_prefix "")

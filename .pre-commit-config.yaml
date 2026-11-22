@@ -82,3 +82,17 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      - id: build-msdos
+        name: Build (MS-DOS OpenWatcom, opt-in via msdos_testing)
+        entry: python -c "import pathlib, urllib.request; p = pathlib.Path('../c-ci/precommit_matrix.py'); exec(p.read_bytes() if p.is_file() else urllib.request.urlopen('https://raw.githubusercontent.com/SamuelMarks/c-ci/master/precommit_matrix.py').read())" build msdos
+        language: python
+        pass_filenames: false
+        always_run: true
+
+      - id: test-msdos
+        name: Test (MS-DOS OpenWatcom + QEMU, opt-in via msdos_testing)
+        entry: python -c "import pathlib, urllib.request; p = pathlib.Path('../c-ci/precommit_matrix.py'); exec(p.read_bytes() if p.is_file() else urllib.request.urlopen('https://raw.githubusercontent.com/SamuelMarks/c-ci/master/precommit_matrix.py').read())" test msdos
+        language: python
+        pass_filenames: false
+        always_run: true

@@ -21,7 +21,7 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
-from scripts.errors import ErrorCode, FreeBsdPortError
+from scripts.errors import ErrorCode, FreeBsdPortError, write_text_if_changed
 from scripts.multicall_prefixer import sanitize_applet_id
 from scripts.parse_freebsd_usr_bin import BinarySpec
 
@@ -122,18 +122,69 @@ def render_per_binary_cmakelists(
             "        include(FetchContent)",
             '        set(BUILD_TESTING OFF CACHE BOOL "" FORCE)',
             '        set(AUTO_WIN_MSVC_BUILD_TESTING OFF CACHE BOOL "" FORCE)',
-            '        set(_LOCAL_AWM "${FREEBSD_REPO_ROOT}/../auto-win-msvc")',
             (
-                "        if(NOT DEFINED FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC "
-                'AND EXISTS "${_LOCAL_AWM}/CMakeLists.txt")'
+                "        option(FREEBSD_AUTO_WIN_MSVC_PREFER_LOCAL "
+                '"Use sibling ../auto-win-msvc or ./auto-win-msvc checkout when present" ON)'
             ),
-            '            set(FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC "${_LOCAL_AWM}")',
+            "        if(NOT FREEBSD_AUTO_WIN_MSVC_PREFER_LOCAL AND _FBSD_AUTO_DETECTED_AWM)",
+            "            unset(FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC CACHE)",
+            "            unset(FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC)",
+            "            unset(_FBSD_AUTO_DETECTED_AWM CACHE)",
             "        endif()",
+            (
+                "        if(FREEBSD_AUTO_WIN_MSVC_PREFER_LOCAL "
+                'AND "${FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC}" STREQUAL "")'
+            ),
+            "            foreach(_awm_cand",
+            '                "${FREEBSD_REPO_ROOT}/../auto-win-msvc"',
+            '                "${FREEBSD_REPO_ROOT}/auto-win-msvc"',
+            "            )",
+            '                if(EXISTS "${_awm_cand}/CMakeLists.txt")',
+            '                    get_filename_component(_LOCAL_AWM "${_awm_cand}" ABSOLUTE)',
+            '                    set(FETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC "${_LOCAL_AWM}")',
+            (
+                "                    set(_FBSD_AUTO_DETECTED_AWM ON CACHE INTERNAL "
+                '"Auto-detected local auto-win-msvc")'
+            ),
+            "                    break()",
+            "                endif()",
+            "            endforeach()",
+            "        endif()",
+            (
+                "        set(FETCHCONTENT_UPDATES_DISCONNECTED_AUTO_WIN_MSVC "
+                'OFF CACHE BOOL "Always fetch latest master for auto_win_msvc" FORCE)'
+            ),
+            (
+                '        file(REMOVE "${CMAKE_BINARY_DIR}'
+                '/CMakeFiles/fc-stamp/auto_win_msvc/update.stamp")'
+            ),
+            "        foreach(_fbsd_git_env",
+            "            GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "            GIT_COMMON_DIR",
+            "            GIT_CONFIG",
+            "            GIT_CONFIG_COUNT",
+            "            GIT_CONFIG_PARAMETERS",
+            "            GIT_DIR",
+            "            GIT_GRAFT_FILE",
+            "            GIT_IMPLICIT_WORK_TREE",
+            "            GIT_INDEX_FILE",
+            "            GIT_NAMESPACE",
+            "            GIT_NO_REPLACE_OBJECTS",
+            "            GIT_OBJECT_DIRECTORY",
+            "            GIT_PREFIX",
+            "            GIT_REPLACE_REF_BASE",
+            "            GIT_SHALLOW_FILE",
+            "            GIT_SUPER_PREFIX",
+            "            GIT_WORK_TREE",
+            "        )",
+            "            unset(ENV{${_fbsd_git_env}})",
+            "        endforeach()",
+            "        unset(_fbsd_git_env)",
             "        FetchContent_Declare(",
             "            auto_win_msvc",
             "            GIT_REPOSITORY https://github.com/SamuelMarks/auto-win-msvc.git",
             "            GIT_TAG master",
-            "            GIT_SHALLOW TRUE",
+            "            GIT_REMOTE_UPDATE_STRATEGY CHECKOUT",
             "        )",
             "        FetchContent_MakeAvailable(auto_win_msvc)",
             '        if(EXISTS "${auto_win_msvc_SOURCE_DIR}/cmake/AutoWinMsvcTransform.cmake")',
@@ -198,6 +249,7 @@ def render_per_binary_cmakelists(
         lines.extend(
             [
                 f"        OUT_SOURCES_VAR _FBSD_{safe_id.upper()}_CODEGEN_SOURCES",
+                f"        OUT_HEADERS_VAR _FBSD_{safe_id.upper()}_CODEGEN_HEADERS",
                 f"        OUT_INC_VAR _FBSD_{safe_id.upper()}_CODEGEN_INC",
                 "    )",
                 (
@@ -208,6 +260,7 @@ def render_per_binary_cmakelists(
             ]
         )
 
+    hdr_dep_arg = f" ${{_FBSD_{safe_id.upper()}_CODEGEN_HEADERS}}" if spec.yacc_sources else ""
     lines.extend(
         [
             "",
@@ -230,7 +283,10 @@ def render_per_binary_cmakelists(
             f'    set(_FBSD_TARGET "fbsd_bin_{safe_id}")',
             "endif()",
             "",
-            f"add_executable(${{_FBSD_TARGET}} ${{_FBSD_{safe_id.upper()}_ACTIVE_SOURCES}})",
+            (
+                f"add_executable(${{_FBSD_TARGET}} "
+                f"${{_FBSD_{safe_id.upper()}_ACTIVE_SOURCES}}{hdr_dep_arg})"
+            ),
             "set_target_properties(${_FBSD_TARGET} PROPERTIES",
             f'    OUTPUT_NAME "{spec.prog}"',
             '    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"',
@@ -366,13 +422,23 @@ def render_per_binary_cmakelists(
                 '"$<$<COMPILE_LANGUAGE:C>:-aa>" '
                 '"-wcd=201" "-wcd=202")'
             ),
-            '    target_link_options(${_FBSD_TARGET} PRIVATE "option" "stack=524288")',
+            '    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "I86" OR CMAKE_SIZEOF_VOID_P EQUAL 2)',
+            (
+                "        target_link_options(${_FBSD_TARGET} PRIVATE "
+                '"option" "stack=8192,eliminate")'
+            ),
+            "    else()",
+            (
+                "        target_link_options(${_FBSD_TARGET} PRIVATE "
+                '"option" "stack=524288,eliminate")'
+            ),
+            "    endif()",
             "elseif(MSVC)",
             (
                 "    target_compile_options(${_FBSD_TARGET} PRIVATE "
                 '"$<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>" '
                 + ('"$<$<COMPILE_LANGUAGE:C>:/Zc:__STDC__>" ' if spec.prog == "vacation" else "")
-                + '"/wd4005" "/wd4244" "/wd4267" "/wd4996")'
+                + '"/wd4005" "/wd4244" "/wd4267" "/wd4716" "/wd4996")'
             ),
             '    target_link_options(${_FBSD_TARGET} PRIVATE "/STACK:8388608")',
             "else()",
@@ -501,8 +567,7 @@ def generate_per_binary_cmake(
     """
     content = render_per_binary_cmakelists(spec, repo_root, freebsd_src, generated_dir)
     out_file = (generated_dir / "per_binary" / spec.prog / "CMakeLists.txt").resolve()
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    out_file.write_text(content, encoding="utf-8")
+    write_text_if_changed(out_file, content)
     return out_file
 
 
@@ -555,5 +620,5 @@ def emit_all_per_binary_cmake(
         )
 
     index_path = (generated_dir / "per_binary_subdirs.cmake").resolve()
-    index_path.write_text(LF.join(index_lines) + LF, encoding="utf-8")
+    write_text_if_changed(index_path, LF.join(index_lines) + LF)
     return index_path, tuple(written)

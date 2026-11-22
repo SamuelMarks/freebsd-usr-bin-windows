@@ -318,14 +318,22 @@ def test_emit_all_codegen_helpers_full_and_minimal(tmp_path: Path) -> None:
     ].read_text(encoding="utf-8")
 
 
-def test_find_m4_binary_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify ``_find_m4_binary`` returns ``None`` when neither ``m4`` nor Git ``m4`` exists.
+def test_find_m4_binary_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Verify ``_find_m4_binary`` across ``PATH``, fallback candidates, and missing binaries.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
+        tmp_path: Pytest temporary directory fixture.
     """
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/m4")
+    assert _find_m4_binary(candidates=()) == "/usr/bin/m4"
+
     monkeypatch.setattr(shutil, "which", lambda _name: None)
-    assert _find_m4_binary() in (None, "C:/Program Files/Git/usr/bin/m4.exe")
+    missing_m4 = tmp_path / "missing_m4.exe"
+    present_m4 = tmp_path / "msys_m4.exe"
+    present_m4.write_text("", encoding="utf-8")
+    assert _find_m4_binary(candidates=(missing_m4, present_m4)) == str(present_m4)
+    assert _find_m4_binary(candidates=(missing_m4,)) is None
 
 
 def test_generate_and_emit_awk_proctab_c(tmp_path: Path) -> None:

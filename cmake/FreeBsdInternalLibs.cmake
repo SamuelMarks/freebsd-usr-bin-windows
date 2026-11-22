@@ -280,7 +280,7 @@ EXPORTS
                 "-wcd=202"
             )
         elseif(MSVC)
-            target_compile_options(${_TARGET} PRIVATE "/FI${_S3_AWM_CFG}" "/FI${_S3_PREINC}" "/wd4005" "/wd4244" "/wd4267" "/wd4996")
+            target_compile_options(${_TARGET} PRIVATE "/FI${_S3_AWM_CFG}" "/FI${_S3_PREINC}" "/wd4005" "/wd4244" "/wd4267" "/wd4716" "/wd4996")
         else()
             target_compile_options(${_TARGET} PRIVATE
                 "SHELL:-include ${_S3_AWM_CFG}"
@@ -954,14 +954,32 @@ endif()
 
 set(_PKGCONF_DIR "${FREEBSD_SRC_DIR}/contrib/pkgconf")
 if(EXISTS "${_PKGCONF_DIR}/libpkgconf/libpkgconf.h" AND EXISTS "${_FBSD_CODEGEN_DIR}/pkgconf/libpkgconf/config.h")
-    file(GLOB _PKGCONF_SRCS "${_PKGCONF_DIR}/libpkgconf/*.c")
+    file(GLOB _PKGCONF_RAW_SRCS "${_PKGCONF_DIR}/libpkgconf/*.c")
+    set(_PKGCONF_SRCS "")
+    foreach(_pc_raw ${_PKGCONF_RAW_SRCS})
+        get_filename_component(_pc_name "${_pc_raw}" NAME)
+        _fbsd_resolve_staged_or_upstream(_pc_src "contrib/pkgconf/libpkgconf/${_pc_name}")
+        list(APPEND _PKGCONF_SRCS "${_pc_src}")
+    endforeach()
+    set(_PKGCONF_INCS "${_FBSD_CODEGEN_DIR}/pkgconf")
+    if(EXISTS "${_FBSD_GEN_BASE}/staged_src/contrib/pkgconf/libpkgconf/libpkgconf.h")
+        list(APPEND _PKGCONF_INCS
+            "${_FBSD_GEN_BASE}/staged_src/contrib/pkgconf"
+            "${_FBSD_GEN_BASE}/staged_src/contrib/pkgconf/libpkgconf"
+        )
+    endif()
+    list(APPEND _PKGCONF_INCS "${_PKGCONF_DIR}" "${_PKGCONF_DIR}/libpkgconf")
+    _fbsd_resolve_staged_or_upstream(_PKGCONF_PUB_HDR "contrib/pkgconf/libpkgconf/libpkgconf.h")
     freebsd_add_section3_library(fbsd_libpkgconf
         OUTPUT_NAME "fbsd_pkgconf"
         SOURCES ${_PKGCONF_SRCS}
-        INCLUDES "${_FBSD_CODEGEN_DIR}/pkgconf" "${_PKGCONF_DIR}" "${_PKGCONF_DIR}/libpkgconf"
+        INCLUDES ${_PKGCONF_INCS}
         DEFINES PKGCONFIG_IS_STATIC=1
-        PUBLIC_HEADERS "${_PKGCONF_DIR}/libpkgconf/libpkgconf.h"
+        PUBLIC_HEADERS "${_PKGCONF_PUB_HDR}"
     )
+    if(TARGET fbsd_libpkgconf)
+        target_compile_definitions(fbsd_libpkgconf PUBLIC PKGCONFIG_IS_STATIC=1)
+    endif()
 else()
     _fbsd_define_portable_s3_unit(fbsd_libpkgconf "fbsd_pkgconf" "fbsd_pkgconf_s3.h"
         [=[const char *fbsd_libpkgconf_abi_version(void);]=]

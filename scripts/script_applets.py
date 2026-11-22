@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.errors import ErrorCode, FreeBsdPortError
+from scripts.errors import ErrorCode, FreeBsdPortError, write_text_if_changed
 
 LF: str = chr(10)
 BS: str = chr(92)
@@ -856,6 +856,6 @@ def emit_all_script_applets(generated_dir: Path) -> dict[str, Path]:
     emitted: dict[str, Path] = {}
     for name in SCRIPT_APPLET_NAMES:
         c_path = (dispatch_dir / f"{name}_main.c").resolve()
-        c_path.write_text(generate_script_applet_c(name), encoding="utf-8")
+        write_text_if_changed(c_path, generate_script_applet_c(name))
         emitted[f"dispatchers/{name}_main.c"] = c_path
     return emitted

@@ -167,6 +167,14 @@ def test_cmake_generate_headers_synthetic_and_functions(tmp_path: Path) -> None:
     assert (out_dir / "include" / "pathnames.h").is_file()
     assert (out_dir / "include" / "libxo" / "xo.h").is_file()
     assert (out_dir / "include" / "freebsd_compat_preinclude.h").is_file()
+    mutex_shim = out_dir / "include" / "bits" / "struct_mutex.h"
+    rwlock_shim = out_dir / "include" / "bits" / "struct_rwlock.h"
+    assert mutex_shim.is_file() and 'push_macro("__unused")' in mutex_shim.read_text(
+        encoding="utf-8"
+    )
+    assert rwlock_shim.is_file() and 'push_macro("__unused")' in rwlock_shim.read_text(
+        encoding="utf-8"
+    )
 
     compat_c = (out_dir / "src" / "freebsd_libcompat.c").read_text(encoding="utf-8")
     assert "xo_emit" in compat_c
@@ -232,6 +240,11 @@ def test_cmake_generate_headers_synthetic_and_functions(tmp_path: Path) -> None:
                 f"if(NOT EXISTS {DQUOTE}${{_cfile}}{DQUOTE})",
                 f"    message(FATAL_ERROR {DQUOTE}Missing libcompat.c{DQUOTE})",
                 "endif()",
+                (
+                    f"freebsd_generate_all("
+                    f"FREEBSD_SRC_DIR {DQUOTE}{synth_src.as_posix()}{DQUOTE} "
+                    f"OUT_DIR {DQUOTE}{fn_out_posix}/skip_mc{DQUOTE} SKIP_MULTICALL)"
+                ),
                 "",
             ]
         ),
@@ -239,6 +252,14 @@ def test_cmake_generate_headers_synthetic_and_functions(tmp_path: Path) -> None:
     )
     res_fn = run_cmake_script(fn_test_cmake)
     assert res_fn.returncode == 0, res_fn.stderr
+    assert (
+        (tmp_path / "fn_out" / "skip_mc" / "enabled_sources.cmake")
+        .read_text(encoding="utf-8")
+        .endswith(f"set(FREEBSD_MULTICALL_SOURCES){NL}")
+    )
+    # Re-run to exercise unchanged SHA-256 stamp and freebsd_write_var_if_different branches
+    res_fn_idem = run_cmake_script(fn_test_cmake)
+    assert res_fn_idem.returncode == 0, res_fn_idem.stderr
 
     # Script-mode and function-mode validation error branches
     res_missing_usr_bin = run_cmake_script(

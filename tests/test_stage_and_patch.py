@@ -17,6 +17,7 @@ from scripts.stage_and_patch import (
     apply_unified_patch,
     detect_freebsd_major,
     parse_unified_diff,
+    sanitized_git_env,
     stage_patched_sources,
     verify_upstream_clean,
 )
@@ -338,6 +339,9 @@ def test_stage_patched_sources_and_verify_upstream_clean(
     assert exc_target.value.code is ErrorCode.SOURCE_TREE_NOT_FOUND
 
     (src_root / ".git").mkdir()
+    assert sanitized_git_env({"PATH": "/usr/bin", "GIT_DIR": "/bad", "GIT_INDEX_FILE": "/idx"}) == {
+        "PATH": "/usr/bin"
+    }
     monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "outer.index"))
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "outer.git"))
 

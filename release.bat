@@ -23,9 +23,13 @@ if /i "%TARGET_ARCH%"=="ARM64" set CMAKE_EXTRA_ARGS=-A ARM64
 
 if exist ..\auto-win-msvc\CMakeLists.txt (
     echo Using local ..\auto-win-msvc repository...
-    set CMAKE_EXTRA_ARGS=!CMAKE_EXTRA_ARGS! -DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC=..\auto-win-msvc
+    for %%I in ("..\auto-win-msvc") do set "AWM_ABS=%%~fI"
+    set "AWM_FWD=!AWM_ABS:\=/!"
+    set CMAKE_EXTRA_ARGS=!CMAKE_EXTRA_ARGS! "-DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC=!AWM_FWD!"
 ) else if exist auto-win-msvc\CMakeLists.txt (
-    set CMAKE_EXTRA_ARGS=!CMAKE_EXTRA_ARGS! -DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC=auto-win-msvc
+    for %%I in ("auto-win-msvc") do set "AWM_ABS=%%~fI"
+    set "AWM_FWD=!AWM_ABS:\=/!"
+    set CMAKE_EXTRA_ARGS=!CMAKE_EXTRA_ARGS! "-DFETCHCONTENT_SOURCE_DIR_AUTO_WIN_MSVC=!AWM_FWD!"
 )
 
 set BUILD_DIR=build_release_%TARGET_ARCH%

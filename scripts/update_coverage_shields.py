@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from scripts.errors import ErrorCode, FreeBsdPortError
+from scripts.stage_and_patch import sanitized_git_env
 
 DOC_BADGE_ALT = "Doc Coverage"
 TEST_BADGE_ALT = "Test Coverage"
@@ -107,6 +108,7 @@ def compute_doc_coverage(repo_root: Path) -> float:
         capture_output=True,
         text=True,
         check=False,
+        env=sanitized_git_env(),
     )
     combined = f"{result.stdout}{nl}{result.stderr}"
     match = DOC_RESULT_RE.search(combined)
@@ -135,6 +137,7 @@ def compute_test_coverage(repo_root: Path) -> float:
         FreeBsdPortError: If coverage calculation fails or output cannot be parsed.
     """
     nl = chr(10)
+    clean_env = sanitized_git_env()
     cov_file = repo_root / ".coverage"
     if cov_file.is_file():
         report_res = subprocess.run(
@@ -143,6 +146,7 @@ def compute_test_coverage(repo_root: Path) -> float:
             capture_output=True,
             text=True,
             check=False,
+            env=clean_env,
         )
         if report_res.returncode == 0:
             match = COV_TOTAL_RE.search(report_res.stdout)
@@ -163,6 +167,7 @@ def compute_test_coverage(repo_root: Path) -> float:
         capture_output=True,
         text=True,
         check=False,
+        env=clean_env,
     )
     combined = f"{pytest_res.stdout}{nl}{pytest_res.stderr}"
     match = COV_TOTAL_RE.search(combined)

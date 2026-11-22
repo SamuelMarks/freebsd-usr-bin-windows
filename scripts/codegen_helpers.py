@@ -22,7 +22,12 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from scripts.errors import ErrorCode, FreeBsdPortError
+from scripts.errors import (
+    ErrorCode,
+    FreeBsdPortError,
+    write_bytes_if_changed,
+    write_text_if_changed,
+)
 from scripts.section3_shims import (
     emit_curses_section3_sources,
     emit_libarchive_win32_sources,
@@ -179,7 +184,7 @@ def generate_ncurses_headers(caps_path: Path | None, out_dir: Path) -> dict[str,
         ]
     )
     termsort_path = (out_dir / "termsort.h").resolve()
-    termsort_path.write_text(termsort_h, encoding="utf-8")
+    write_text_if_changed(termsort_path, termsort_h)
     emitted["termsort.h"] = termsort_path
 
     cfg_h = LF.join(
@@ -206,15 +211,29 @@ def generate_ncurses_headers(caps_path: Path | None, out_dir: Path) -> dict[str,
         ("ncurses_def.h", f"#ifndef NCURSES_DEF_H{LF}#define NCURSES_DEF_H 1{LF}#endif{LF}"),
     ):
         hdr_path = (out_dir / hdr_name).resolve()
-        hdr_path.write_text(content, encoding="utf-8")
+        write_text_if_changed(hdr_path, content)
         emitted[hdr_name] = hdr_path
 
     emitted.update(emit_curses_section3_sources(out_dir))
     return emitted
 
 
-def _find_m4_binary() -> str | None:
+WINDOWS_M4_CANDIDATES: tuple[Path, ...] = (
+    Path("C:/msys64/usr/bin/m4.exe"),
+    Path("C:/Program Files/Git/usr/bin/m4.exe"),
+    Path("C:/ProgramData/chocolatey/bin/m4.exe"),
+    Path("C:/ProgramData/chocolatey/lib/winflexbison3/tools/m4.exe"),
+)
+
+
+def _find_m4_binary(
+    candidates: Sequence[Path] = WINDOWS_M4_CANDIDATES,
+) -> str | None:
     """Locate a host ``m4`` macro processor executable if installed.
+
+    Args:
+        candidates: Fallback executable paths probed when ``m4`` / ``gm4`` is
+            not present on ``PATH`` (e.g. MSYS2, Git for Windows, Chocolatey).
 
     Returns:
         Path to ``m4`` / ``gm4``, or ``None`` if unavailable.
@@ -222,8 +241,10 @@ def _find_m4_binary() -> str | None:
     found = shutil.which("m4") or shutil.which("gm4")
     if found is not None:
         return found
-    git_m4 = Path("C:/Program Files/Git/usr/bin/m4.exe")
-    return str(git_m4) if git_m4.is_file() else None
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand)
+    return None
 
 
 def generate_elftc_artifacts(freebsd_src: Path, out_dir: Path) -> dict[str, Path]:
@@ -251,7 +272,7 @@ def generate_elftc_artifacts(freebsd_src: Path, out_dir: Path) -> dict[str, Path
         ]
     )
     native_path = (out_dir / "native-elf-format.h").resolve()
-    native_path.write_text(native_elf_h, encoding="utf-8")
+    write_text_if_changed(native_path, native_elf_h)
     emitted["native-elf-format.h"] = native_path
 
     ver_c = LF.join(
@@ -264,7 +285,7 @@ def generate_elftc_artifacts(freebsd_src: Path, out_dir: Path) -> dict[str, Path
         ]
     )
     ver_path = (out_dir / "libelftc_version.c").resolve()
-    ver_path.write_text(ver_c, encoding="utf-8")
+    write_text_if_changed(ver_path, ver_c)
     emitted["libelftc_version.c"] = ver_path
 
     sys_src = freebsd_src / "sys" / "sys"
@@ -275,7 +296,7 @@ def generate_elftc_artifacts(freebsd_src: Path, out_dir: Path) -> dict[str, Path
             cand = sys_src / hdr
             if cand.is_file():
                 dst = (sys_dst / hdr).resolve()
-                shutil.copyfile(cand, dst)
+                write_bytes_if_changed(dst, cand.read_bytes())
                 emitted[f"sys/{hdr}"] = dst
 
     m4_bin = _find_m4_binary()
@@ -293,7 +314,7 @@ def generate_elftc_artifacts(freebsd_src: Path, out_dir: Path) -> dict[str, Path
             f"#ifndef ELFTC_GETPROGNAME{LF}#define ELFTC_GETPROGNAME() getprogname(){LF}#endif{LF}"
         )
         elftc_dst = (out_dir / "_elftc.h").resolve()
-        elftc_dst.write_text(elftc_txt, encoding="utf-8")
+        write_text_if_changed(elftc_dst, elftc_txt)
         emitted["_elftc.h"] = elftc_dst
     if m4_bin is not None and elftc_root.is_dir():
         gensrcs_dir = out_dir / "gensrcs"
@@ -325,13 +346,14 @@ def generate_elftc_artifacts(freebsd_src: Path, out_dir: Path) -> dict[str, Path
                 m4_file = sub_dir / f"{stem}.m4"
                 if m4_file.is_file():
                     res = subprocess.run(
-                        [m4_bin, f"-I{sub_dir}", f"-DSRCDIR={sub_dir}", str(m4_file)],
+                        [m4_bin, "-I.", "-DSRCDIR=.", m4_file.name],
+                        cwd=sub_dir,
                         capture_output=True,
                         text=True,
                         check=True,
                     )
                     c_dst = (gensrcs_dir / f"{stem}.c").resolve()
-                    c_dst.write_text(res.stdout, encoding="utf-8")
+                    write_text_if_changed(c_dst, res.stdout)
                     emitted[f"gensrcs/{stem}.c"] = c_dst
 
     return emitted
@@ -423,7 +445,7 @@ def generate_libmd_artifacts(freebsd_src: Path, out_dir: Path) -> dict[str, Path
             for old_s, new_s in repls:
                 rendered = rendered.replace(old_s, new_s)
             dst = (out_dir / fn).resolve()
-            dst.write_text(rendered, encoding="utf-8")
+            write_text_if_changed(dst, rendered)
             emitted[fn] = dst
 
     sys_src = freebsd_src / "sys" / "sys"
@@ -434,7 +456,7 @@ def generate_libmd_artifacts(freebsd_src: Path, out_dir: Path) -> dict[str, Path
             cand = sys_src / hdr_name
             if cand.is_file():
                 dst = (sys_dst / hdr_name).resolve()
-                shutil.copyfile(cand, dst)
+                write_bytes_if_changed(dst, cand.read_bytes())
                 emitted[f"sys/{hdr_name}"] = dst
     return emitted
 
@@ -473,7 +495,7 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
             ]
         )
         rx_dst = (rx_dir / "regex.h").resolve()
-        rx_dst.write_text(prefix + rx_txt, encoding="utf-8")
+        write_text_if_changed(rx_dst, prefix + rx_txt)
         emitted["codegen/libregex/regex.h"] = rx_dst
 
     magic_in = freebsd_src / "contrib" / "file" / "src" / "magic.h.in"
@@ -482,7 +504,7 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
         mg_dir.mkdir(parents=True, exist_ok=True)
         mg_txt = magic_in.read_text(encoding="utf-8", errors="ignore").replace("X.YY", "545")
         mg_dst = (mg_dir / "magic.h").resolve()
-        mg_dst.write_text(mg_txt, encoding="utf-8")
+        write_text_if_changed(mg_dst, mg_txt)
         emitted["codegen/libmagic/magic.h"] = mg_dst
 
     ldns_hdr_dir = freebsd_src / "contrib" / "ldns" / "ldns"
@@ -538,7 +560,7 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
                     "#define random(x) rand(x)", "/* random kept */"
                 ).replace("#define srandom(x) srand(x)", "/* srandom kept */")
             dst = (ldns_out / hdr_file.name).resolve()
-            dst.write_text(txt, encoding="utf-8")
+            write_text_if_changed(dst, txt)
             emitted[f"codegen/ldns/ldns/{hdr_file.name}"] = dst
 
     fetch_hdr_in = freebsd_src / "lib" / "libfetch" / "fetch.h"
@@ -574,7 +596,7 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
             flags=re.MULTILINE,
         )
         fetch_dst = (fetch_out / "fetch.h").resolve()
-        fetch_dst.write_text(fetch_prefix + fetch_txt, encoding="utf-8")
+        write_text_if_changed(fetch_dst, fetch_prefix + fetch_txt)
         emitted["codegen/libfetch/fetch.h"] = fetch_dst
 
     dpv_hdr_in = freebsd_src / "lib" / "libdpv" / "dpv.h"
@@ -604,7 +626,7 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
         for sym in ("long long dpv_overall_read;", "int dpv_interrupt;", "int dpv_abort;"):
             dpv_txt = dpv_txt.replace(f"extern {sym}", f"_FBSD_DPV_DATA {sym}")
         dpv_dst = (dpv_out / "dpv.h").resolve()
-        dpv_dst.write_text(dpv_prefix + dpv_txt, encoding="utf-8")
+        write_text_if_changed(dpv_dst, dpv_prefix + dpv_txt)
         emitted["codegen/libdpv/dpv.h"] = dpv_dst
 
     nbsd_in = freebsd_src / "lib" / "libnetbsd"
@@ -615,9 +637,9 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
             src_h = nbsd_in / hname
             if src_h.is_file():
                 dst_h = (nbsd_out / hname).resolve()
-                dst_h.write_text(
+                write_text_if_changed(
+                    dst_h,
                     src_h.read_text(encoding="utf-8", errors="ignore"),
-                    encoding="utf-8",
                 )
                 emitted[f"codegen/libnetbsd/{hname}"] = dst_h
 
@@ -629,9 +651,9 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
             src_h = obsd_in / hname
             if src_h.is_file():
                 dst_h = (obsd_out / hname).resolve()
-                dst_h.write_text(
+                write_text_if_changed(
+                    dst_h,
                     src_h.read_text(encoding="utf-8", errors="ignore"),
-                    encoding="utf-8",
                 )
                 emitted[f"codegen/libopenbsd/{hname}"] = dst_h
 
@@ -657,7 +679,7 @@ def stage_section3_upstream_headers(freebsd_src: Path, codegen_root: Path) -> di
                     flags=re.MULTILINE,
                 )
                 dst_h = (lzma_out / Path(rel_h).name).resolve()
-                dst_h.write_text(htxt, encoding="utf-8")
+                write_text_if_changed(dst_h, htxt)
                 emitted[f"codegen/liblzma/{Path(rel_h).name}"] = dst_h
 
     return emitted
@@ -681,7 +703,7 @@ def stage_iconv_citrus_headers(freebsd_src: Path, out_dir: Path) -> dict[str, Pa
     emitted: dict[str, Path] = {}
     for hdr_file in sorted(iconv_src.glob("*.h")):
         dst = (out_dir / hdr_file.name).resolve()
-        shutil.copyfile(hdr_file, dst)
+        write_bytes_if_changed(dst, hdr_file.read_bytes())
         emitted[hdr_file.name] = dst
     return emitted
 
@@ -1090,7 +1112,7 @@ def emit_compile_et_headers(out_dir: Path) -> dict[str, Path]:
     emitted: dict[str, Path] = {}
     for name, txt in (("getarg.h", getarg_h), ("roken.h", roken_h), ("parse.h", parse_h)):
         dst = (out_dir / name).resolve()
-        dst.write_text(txt, encoding="utf-8")
+        write_text_if_changed(dst, txt)
         emitted[name] = dst
     return emitted
 
@@ -1120,9 +1142,9 @@ def emit_all_codegen_helpers(freebsd_src: Path, generated_dir: Path) -> dict[str
             src_tbl = libfetch_dir / in_name
             if src_tbl.is_file():
                 dst_hdr = (fetch_out / out_name).resolve()
-                dst_hdr.write_text(
+                write_text_if_changed(
+                    dst_hdr,
                     generate_libfetch_errlist_h(src_tbl, arr_name, proto),
-                    encoding="utf-8",
                 )
                 emitted[f"codegen/libfetch/{out_name}"] = dst_hdr
 
@@ -1131,20 +1153,21 @@ def emit_all_codegen_helpers(freebsd_src: Path, generated_dir: Path) -> dict[str
         vi_out = codegen_root / "vi"
         vi_out.mkdir(parents=True, exist_ok=True)
         opts_def = (vi_out / "options_def.h").resolve()
-        opts_def.write_text(generate_vi_options_def_h(nvi_opts_c), encoding="utf-8")
+        write_text_if_changed(opts_def, generate_vi_options_def_h(nvi_opts_c))
         emitted["codegen/vi/options_def.h"] = opts_def
         vi_src_dir = freebsd_src / "usr.bin" / "vi"
         for cfg_name in ("config.h", "pathnames.h", "extern.h"):
             cand = vi_src_dir / cfg_name
             if cand.is_file():
                 dst = (vi_out / cfg_name).resolve()
-                shutil.copyfile(cand, dst)
                 if cfg_name == "config.h":
-                    dst.write_text(
-                        dst.read_text(encoding="utf-8")
+                    write_text_if_changed(
+                        dst,
+                        cand.read_text(encoding="utf-8")
                         + f"{LF}#ifdef __linux__{LF}#undef HAVE_DIRENT_D_NAMLEN{LF}#endif{LF}",
-                        encoding="utf-8",
                     )
+                else:
+                    write_bytes_if_changed(dst, cand.read_bytes())
                 emitted[f"codegen/vi/{cfg_name}"] = dst
 
     caps_path = freebsd_src / "contrib" / "ncurses" / "include" / "Caps"
@@ -1182,13 +1205,13 @@ def emit_all_codegen_helpers(freebsd_src: Path, generated_dir: Path) -> dict[str
         cfg_dir.mkdir(parents=True, exist_ok=True)
         cfg_txt = generate_contrib_config_header(lib_name)
         cfg_path = (cfg_dir / "config.h").resolve()
-        cfg_path.write_text(cfg_txt, encoding="utf-8")
+        write_text_if_changed(cfg_path, cfg_txt)
         emitted[f"codegen/{lib_name}/config.h"] = cfg_path
         if lib_name == "pkgconf":
             sub_cfg = cfg_dir / "libpkgconf"
             sub_cfg.mkdir(parents=True, exist_ok=True)
             sub_cfg_path = (sub_cfg / "config.h").resolve()
-            sub_cfg_path.write_text(cfg_txt, encoding="utf-8")
+            write_text_if_changed(sub_cfg_path, cfg_txt)
             emitted["codegen/pkgconf/libpkgconf/config.h"] = sub_cfg_path
 
     sys_socket_h = freebsd_src / "sys" / "sys" / "socket.h"
@@ -1196,7 +1219,7 @@ def emit_all_codegen_helpers(freebsd_src: Path, generated_dir: Path) -> dict[str
         gai_out = codegen_root / "getaddrinfo"
         gai_out.mkdir(parents=True, exist_ok=True)
         gai_tbl = (gai_out / "tables.h").resolve()
-        gai_tbl.write_text(generate_getaddrinfo_tables_h(sys_socket_h), encoding="utf-8")
+        write_text_if_changed(gai_tbl, generate_getaddrinfo_tables_h(sys_socket_h))
         emitted["codegen/getaddrinfo/tables.h"] = gai_tbl
 
     for key, val in emit_compile_et_headers(codegen_root / "compile_et").items():
@@ -1498,15 +1521,15 @@ def emit_kernel_stat_sources(out_dir: Path) -> dict[str, Path]:
     )
 
     emitted["vmstat.c"] = (out_dir / "vmstat.c").resolve()
-    emitted["vmstat.c"].write_text(vmstat_c, encoding="utf-8")
+    write_text_if_changed(emitted["vmstat.c"], vmstat_c)
     emitted["netstat.c"] = (out_dir / "netstat.c").resolve()
-    emitted["netstat.c"].write_text(netstat_c, encoding="utf-8")
+    write_text_if_changed(emitted["netstat.c"], netstat_c)
     emitted["sockstat.c"] = (out_dir / "sockstat.c").resolve()
-    emitted["sockstat.c"].write_text(sockstat_c, encoding="utf-8")
+    write_text_if_changed(emitted["sockstat.c"], sockstat_c)
     emitted["systat.c"] = (out_dir / "systat.c").resolve()
-    emitted["systat.c"].write_text(systat_c, encoding="utf-8")
+    write_text_if_changed(emitted["systat.c"], systat_c)
     emitted["truss.c"] = (out_dir / "truss.c").resolve()
-    emitted["truss.c"].write_text(truss_c, encoding="utf-8")
+    write_text_if_changed(emitted["truss.c"], truss_c)
 
     generic_specs: dict[str, tuple[str, str]] = {
         "btsockstat": (
@@ -1567,7 +1590,7 @@ def emit_kernel_stat_sources(out_dir: Path) -> dict[str, Path]:
             ]
         )
         dst = (out_dir / f"{prog_name}.c").resolve()
-        dst.write_text(c_src, encoding="utf-8")
+        write_text_if_changed(dst, c_src)
         emitted[f"{prog_name}.c"] = dst
 
     return emitted
@@ -1785,7 +1808,7 @@ def emit_ncurses_progs_sources(out_dir: Path) -> dict[str, Path]:
         ("tset.c", tset_c),
     ):
         dst = (out_dir / fname).resolve()
-        dst.write_text(content, encoding="utf-8")
+        write_text_if_changed(dst, content)
         emitted[fname] = dst
     return emitted
 
@@ -2019,7 +2042,7 @@ def emit_vacation_sources(out_dir: Path) -> dict[str, Path]:
     emitted: dict[str, Path] = {}
     for fname, txt in (("sm_os.h", sm_os_h), ("fbsd_vacation_sm.c", vac_sm_c)):
         dst = (out_dir / fname).resolve()
-        dst.write_text(txt, encoding="utf-8")
+        write_text_if_changed(dst, txt)
         emitted[fname] = dst
     return emitted
 
@@ -2147,6 +2170,5 @@ def emit_awk_proctab_c(awkgram_tab_h: Path, maketab_c: Path, out_proctab_c: Path
         Resolved path to written ``proctab.c``.
     """
     dst = out_proctab_c.resolve()
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(generate_awk_proctab_c(awkgram_tab_h, maketab_c), encoding="utf-8")
+    write_text_if_changed(dst, generate_awk_proctab_c(awkgram_tab_h, maketab_c))
     return dst

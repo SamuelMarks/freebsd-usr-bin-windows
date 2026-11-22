@@ -9,7 +9,9 @@
 # 3. build-linux-wine: Unix CMake + Section 3 SHARED libs + CTest verification.
 # 4. build-dos: OpenWatcom v2 32-bit Protected-Mode DOS build (Section 3 STATIC
 #    .lib + per-binary .exe + freebsd-usr-bin.exe) and CPack ZIP packaging.
-# 5. release: On v* tags, runs scripts.package_release_assets to assemble suite
+# 5. test-msdos: Headless QEMU + OpenWatcom v2 MS-DOS (4.00, 2.00, 1.25; I86 +
+#    I386) build and CTest verification of the current working directory via c-ci.
+# 6. release: On v* tags, runs scripts.package_release_assets to assemble suite
 #    bundles, Section 3 SDK, <prog>-<ver>-windows.zip, <prog>-<ver>-dos32.zip,
 #    and SHA256SUMS.txt (< 950 assets), publishing to GitHub Releases.
 # =============================================================================
@@ -29,6 +31,9 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  msdos_testing: true
+
 permissions:
   contents: write
 
@@ -43,6 +48,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: SamuelMarks/auto-win-msvc
+          ref: master
           path: auto-win-msvc
 
       - name: Sparse Checkout freebsd-src
@@ -110,6 +116,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: SamuelMarks/auto-win-msvc
+          ref: master
           path: auto-win-msvc
 
       - name: Sparse Checkout freebsd-src
@@ -134,6 +141,53 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+
+      - name: Build Host x64 Berkeley byacc & Setup m4 / win_flex
+        shell: pwsh
+        run: |
+          $hostTools = Join-Path $env:RUNNER_TEMP "fbsd_host_tools"
+          New-Item -ItemType Directory -Force -Path $hostTools | Out-Null
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vcInstall = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $vcvars64 = Join-Path $vcInstall "VC\Auxiliary\Build\vcvars64.bat"
+          $byaccDir = Join-Path $PWD "freebsd-src\contrib\byacc"
+          $byaccExe = Join-Path $hostTools "byacc.exe"
+          $byaccSrcs = @(
+            "closure.c", "error.c", "graph.c", "lalr.c", "lr0.c", "main.c", "mkpar.c",
+            "mstring.c", "output.c", "reader.c", "yaccpar.c", "symtab.c", "verbose.c", "warshall.c"
+          ) | ForEach-Object { "`"$(Join-Path $byaccDir $_)`"" }
+          $srcArgs = $byaccSrcs -join " "
+          cmd /c "`"$vcvars64`" >nul && pushd `"$hostTools`" && cl.exe /nologo /O2 /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_DEPRECATE /DMAXTABLE=INT_MAX /DYYPATCH=20230201 -I`"$byaccDir`" $srcArgs /Fe:`"$byaccExe`""
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $byaccExe)) {
+            throw "Failed to compile host x64 byacc.exe ($LASTEXITCODE)"
+          }
+          echo "$hostTools" >> $env:GITHUB_PATH
+          $env:PATH = "$hostTools;$env:PATH"
+          if (-not (Get-Command win_flex.exe -ErrorAction SilentlyContinue) -and -not (Get-Command flex.exe -ErrorAction SilentlyContinue)) {
+            choco install winflexbison3 -y --no-progress
+          }
+          $chocoBin = "C:\ProgramData\chocolatey\bin"
+          if (Test-Path $chocoBin) {
+            echo "$chocoBin" >> $env:GITHUB_PATH
+            $env:PATH = "$chocoBin;$env:PATH"
+          }
+          $m4Cmd = Get-Command m4.exe -ErrorAction SilentlyContinue
+          $m4Path = if ($m4Cmd) {
+            $m4Cmd.Source
+          } elseif (Test-Path "C:\msys64\usr\bin\m4.exe") {
+            "C:\msys64\usr\bin\m4.exe"
+          } elseif (Test-Path "C:\Program Files\Git\usr\bin\m4.exe") {
+            "C:\Program Files\Git\usr\bin\m4.exe"
+          } else {
+            choco install m4 -y --no-progress
+            (Get-Command m4.exe -ErrorAction Stop).Source
+          }
+          $lexCmd = Get-Command win_flex.exe, flex.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $lexCmd) { throw "Host flex/lex binary not found" }
+          Write-Host "Using byacc: $byaccExe"
+          Write-Host "Using m4: $m4Path"
+          & $byaccExe -V
+          & $lexCmd.Source --version | Select-Object -First 1
 
       - name: Setup MSVC (${{ matrix.arch }})
         uses: ilammy/msvc-dev-cmd@v1
@@ -241,6 +295,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: SamuelMarks/auto-win-msvc
+          ref: master
           path: auto-win-msvc
 
       - name: Sparse Checkout freebsd-src
@@ -278,6 +333,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: SamuelMarks/auto-win-msvc
+          ref: master
           path: auto-win-msvc
 
       - name: Sparse Checkout freebsd-src
@@ -358,6 +414,133 @@ jobs:
             build_dos/DOS32A.EXE
             build_dos/freebsd-usr-bin-*-dos32*
 
+  test-msdos:
+    name: ${{ matrix.label }} (${{ matrix.archs }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os_target: msdos-4.0
+            label: MS-DOS 4.00
+            archs: I86,I386
+          - os_target: msdos-2.0
+            label: MS-DOS 2.00
+            archs: I86,I386
+          - os_target: msdos-1.25
+            label: MS-DOS 1.25
+            archs: I86,I386
+    steps:
+      - name: Checkout freebsd-usr-bin-windows
+        uses: actions/checkout@v7
+
+      - name: Checkout auto-win-msvc
+        uses: actions/checkout@v7
+        with:
+          repository: SamuelMarks/auto-win-msvc
+          ref: master
+          path: auto-win-msvc
+
+      - name: Sparse Checkout freebsd-src
+        uses: actions/checkout@v7
+        with:
+          repository: freebsd/freebsd-src
+          ref: releng/15.0
+          path: freebsd-src
+          fetch-depth: 1
+          sparse-checkout: |
+            bin
+            contrib
+            gnu
+            include
+            lib
+            libexec
+            sys
+            usr.bin
+            usr.sbin
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Stage c-ci and Bento Repositories
+        shell: bash
+        run: |
+          set -e
+          rm -rf "$RUNNER_TEMP/c-ci" "$RUNNER_TEMP/bento"
+          git clone --depth 1 --branch master https://github.com/SamuelMarks/c-ci.git "$RUNNER_TEMP/c-ci"
+
+          cloned_bento=0
+          for ref_cand in "multi-os-qemu-aarch64" "dos" "main"; do
+            if git clone --depth 1 --branch "$ref_cand" https://github.com/SamuelMarks/bento.git "$RUNNER_TEMP/bento" 2>/dev/null; then
+              if [ -f "$RUNNER_TEMP/bento/msdos-builder.sh" ]; then
+                cloned_bento=1
+                break
+              fi
+              rm -rf "$RUNNER_TEMP/bento"
+            fi
+          done
+          if [ "$cloned_bento" -ne 1 ]; then
+            echo "Error: Failed to locate msdos-builder.sh in SamuelMarks/bento" >&2
+            exit 1
+          fi
+
+          bento_sha="$(git -C "$RUNNER_TEMP/bento" rev-parse HEAD)"
+          echo "BENTO_HEAD_SHA=${bento_sha}" >> "$GITHUB_ENV"
+
+      - name: Install Host Dependencies (QEMU, mtools, NASM, Ruby, CMake)
+        shell: bash
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 \
+            qemu-utils \
+            mtools \
+            dosfstools \
+            nasm \
+            unzip \
+            xz-utils \
+            ruby \
+            cmake \
+            m4 \
+            byacc \
+            flex \
+            curl \
+            ca-certificates
+
+      - name: Cache OpenWatcom v2 Toolchain
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/watcom-cache
+          key: c-ci-openwatcom-v2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache Bento DOS Base Images & Compiled Stages
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/bento/builds
+          key: c-ci-bento-dos-v2-${{ env.BENTO_HEAD_SHA }}-${{ matrix.os_target }}
+          restore-keys: |
+            c-ci-bento-dos-v2-${{ env.BENTO_HEAD_SHA }}-
+
+      - name: Build and Run CTest on ${{ matrix.label }} (${{ matrix.archs }})
+        shell: bash
+        env:
+          DOS_WATCOM_ROOT: ${{ runner.temp }}/watcom-cache
+          DOS_WORK_DIR: ${{ runner.temp }}/dos-work
+          DOS_BUILD_TYPE: Release
+        run: |
+          set -e
+          sh "$RUNNER_TEMP/c-ci/run_dos_watcom_matrix.sh" \
+            --mode standalone \
+            --os "${{ matrix.os_target }}" \
+            --arch "${{ matrix.archs }}" \
+            --bento-dir "$RUNNER_TEMP/bento" \
+            --project "."
+          test -z "$(git -C freebsd-src status --porcelain)"
+
   release:
     runs-on: ubuntu-latest
     needs:
@@ -365,6 +548,7 @@ jobs:
       - build-windows
       - build-linux-wine
       - build-dos
+      - test-msdos
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write

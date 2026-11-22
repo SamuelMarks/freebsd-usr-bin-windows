@@ -12,10 +12,15 @@ import dataclasses
 import os
 import re
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
-from scripts.errors import ErrorCode, FreeBsdPortError
+from scripts.errors import (
+    ErrorCode,
+    FreeBsdPortError,
+    write_bytes_if_changed,
+    write_text_if_changed,
+)
 
 TAB: str = chr(9)
 LF: str = chr(10)
@@ -410,8 +415,7 @@ def stage_patched_sources(
             patched_text = apply_unified_patch(current_text, fp)
 
             dest_path = (staged_dir / fp.target_rel_path).resolve()
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-            dest_path.write_text(patched_text, encoding="utf-8", errors="surrogateescape")
+            write_text_if_changed(dest_path, patched_text, errors="surrogateescape")
             staged_map[orig_path] = dest_path
             if orig_path.suffix in PATCHED_HEADER_SUFFIXES:
                 patched_header_dirs.add(orig_path.parent)
@@ -426,10 +430,25 @@ def stage_patched_sources(
                 and sib_resolved not in staged_map
             ):
                 dest_sib = (dest_dir / sib.name).resolve()
-                dest_sib.write_bytes(sib_resolved.read_bytes())
+                write_bytes_if_changed(dest_sib, sib_resolved.read_bytes())
                 staged_map[sib_resolved] = dest_sib
 
     return staged_map
+
+
+def sanitized_git_env(base_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return a copy of ``base_env`` with Git repository-local variables removed.
+
+    Args:
+        base_env: Optional source environment mapping (defaults to ``os.environ``).
+
+    Returns:
+        Sanitized environment dictionary safe for nested Git, CMake, and pytest calls.
+    """
+    clean_env = dict(os.environ if base_env is None else base_env)
+    for git_var in GIT_REPO_ENV_VARS:
+        clean_env.pop(git_var, None)
+    return clean_env
 
 
 def verify_upstream_clean(freebsd_src: Path) -> None:
@@ -453,9 +472,7 @@ def verify_upstream_clean(freebsd_src: Path) -> None:
     if not (src_root / ".git").exists():
         return
 
-    clean_env = dict(os.environ)
-    for git_var in GIT_REPO_ENV_VARS:
-        clean_env.pop(git_var, None)
+    clean_env = sanitized_git_env()
 
     res = subprocess.run(
         ["git", "-C", str(src_root), "status", "--porcelain"],

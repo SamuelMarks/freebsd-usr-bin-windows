@@ -21,7 +21,7 @@ import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from scripts.errors import ErrorCode, FreeBsdPortError
+from scripts.errors import ErrorCode, FreeBsdPortError, write_text_if_changed
 
 LF: str = chr(10)
 TAB: str = chr(9)
@@ -289,7 +289,7 @@ def emit_symbol_prefix_header(
         lines.append(f"/* {sym} -> fbsd_{applet_id}_{sym} */")
     lines.extend(["#endif", ""])
     hdr_path = (out_dir / f"{applet_id}_sym_prefix.h").resolve()
-    hdr_path.write_text(LF.join(lines), encoding="utf-8")
+    write_text_if_changed(hdr_path, LF.join(lines))
     return hdr_path
 
 
@@ -452,7 +452,7 @@ def stage_multicall_applet(
                     symbols,
                     rewrite_main=False,
                 )
-                (applet_dir / local_hdr.name).write_text(rewritten_hdr, encoding="utf-8")
+                write_text_if_changed((applet_dir / local_hdr.name).resolve(), rewritten_hdr)
 
     staged_c: list[Path] = []
     for idx, c_file in enumerate(c_sources):
@@ -464,7 +464,7 @@ def stage_multicall_applet(
             rewrite_main=True,
         )
         dst_c = (applet_dir / f"{idx:02d}_{c_file.name}").resolve()
-        dst_c.write_text(rewritten_c, encoding="utf-8")
+        write_text_if_changed(dst_c, rewritten_c)
         staged_c.append(dst_c)
 
     return hdr_path, tuple(staged_c)

@@ -1,8 +1,10 @@
-"""Strongly typed domain error codes and exception hierarchy for ``freebsd-usr-bin-windows``.
+"""Strongly typed domain error codes, exceptions, and idempotent file writers.
 
-Provides a single unified ``ErrorCode`` enumeration and ``FreeBsdPortError``
-exception class used across all build-manifest, code-generation, source-staging,
-CMake-emission, release-packaging, and test-runner scripts.
+Provides a single unified ``ErrorCode`` enumeration, ``FreeBsdPortError``
+exception class, and timestamp-preserving ``write_text_if_changed`` /
+``write_bytes_if_changed`` helpers used across all build-manifest,
+code-generation, source-staging, CMake-emission, release-packaging, and
+test-runner scripts.
 """
 
 from __future__ import annotations
@@ -87,3 +89,49 @@ class FreeBsdPortError(Exception):
             Formatted error string.
         """
         return self._format_message()
+
+
+def write_text_if_changed(
+    path: Path,
+    content: str,
+    *,
+    encoding: str = "utf-8",
+    errors: str = "strict",
+) -> bool:
+    """Write ``content`` to ``path`` only when missing or different on disk.
+
+    Preserves existing file modification timestamps across incremental CMake
+    re-configurations so Ninja, MSBuild, and OpenWatcom ``wmake`` do not
+    recompile unchanged translation units.
+
+    Args:
+        path: Destination filesystem path to create or update.
+        content: Desired text content to persist.
+        encoding: Character encoding passed to ``Path.read_text`` and ``write_text``.
+        errors: Codec error handling scheme passed to ``read_text`` and ``write_text``.
+
+    Returns:
+        ``True`` if ``path`` was created or updated; ``False`` if unchanged.
+    """
+    if path.is_file() and path.read_text(encoding=encoding, errors=errors) == content:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding=encoding, errors=errors)
+    return True
+
+
+def write_bytes_if_changed(path: Path, data: bytes) -> bool:
+    """Write raw ``data`` to ``path`` only when missing or byte-different on disk.
+
+    Args:
+        path: Destination filesystem path to create or update.
+        data: Desired raw byte payload to persist.
+
+    Returns:
+        ``True`` if ``path`` was created or updated; ``False`` if unchanged.
+    """
+    if path.is_file() and path.read_bytes() == data:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return True
