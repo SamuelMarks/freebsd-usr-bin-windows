@@ -79,10 +79,17 @@ def render_per_binary_cmakelists(
         "",
         "if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)",
         "    set(_FBSD_STANDALONE_BINARY ON)",
-        "    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)",
+        "    set(_fbsd_user_had_build_type OFF)",
+        "    if(DEFINED CACHE{CMAKE_BUILD_TYPE})",
+        "        set(_fbsd_user_had_build_type ON)",
+        "    endif()",
         f"    project(freebsd_usr_bin_{safe_id} VERSION 15.0.0 LANGUAGES {langs})",
-        "    set(CMAKE_C_STANDARD 11)",
-        "    set(CMAKE_C_STANDARD_REQUIRED OFF)",
+        '    if((WATCOM OR CMAKE_SYSTEM_NAME STREQUAL "DOS") AND NOT _fbsd_user_had_build_type)',
+        (
+            '        set(CMAKE_BUILD_TYPE "MinSizeRel" CACHE STRING '
+            '"Default build type for DOS" FORCE)'
+        ),
+        "    endif()",
         "else()",
         "    set(_FBSD_STANDALONE_BINARY OFF)",
         "endif()",
@@ -92,8 +99,6 @@ def render_per_binary_cmakelists(
             [
                 "if(NOT FREEBSD_TARGET_DOS)",
                 "    enable_language(CXX)",
-                "    set(CMAKE_CXX_STANDARD 17)",
-                "    set(CMAKE_CXX_STANDARD_REQUIRED OFF)",
                 "endif()",
             ]
         )
@@ -106,6 +111,7 @@ def render_per_binary_cmakelists(
             f'set(FREEBSD_GEN_INC "{gen_inc_posix}" CACHE PATH "Generated FreeBSD include dir")',
             "",
             "if(_FBSD_STANDALONE_BINARY)",
+            '    option(BUILD_TESTING "Enable CTest smoke checks" ON)',
             '    option(FREEBSD_USE_AUTO_WIN_MSVC "Link auto-win-msvc polyfill library" ON)',
             '    option(FREEBSD_SECTION3_SHARED "Build Section 3 libs as SHARED" ON)',
             '    if(WATCOM OR CMAKE_SYSTEM_NAME STREQUAL "DOS")',
@@ -113,13 +119,10 @@ def render_per_binary_cmakelists(
             "        set(FREEBSD_SECTION3_SHARED OFF)",
             "    else()",
             "        set(FREEBSD_TARGET_DOS OFF)",
-            "        set(CMAKE_POSITION_INDEPENDENT_CODE ON)",
             "    endif()",
             "    if(FREEBSD_USE_AUTO_WIN_MSVC)",
-            "        if(MSVC)",
-            "            add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_RAND_S)",
-            "        endif()",
             "        include(FetchContent)",
+            '        set(_saved_build_testing "${BUILD_TESTING}")',
             '        set(BUILD_TESTING OFF CACHE BOOL "" FORCE)',
             '        set(AUTO_WIN_MSVC_BUILD_TESTING OFF CACHE BOOL "" FORCE)',
             (
@@ -187,6 +190,23 @@ def render_per_binary_cmakelists(
             "            GIT_REMOTE_UPDATE_STRATEGY CHECKOUT",
             "        )",
             "        FetchContent_MakeAvailable(auto_win_msvc)",
+            '        set(BUILD_TESTING "${_saved_build_testing}" CACHE BOOL "" FORCE)',
+            (
+                "        foreach(_awm_tgt IN ITEMS "
+                "auto-win-msvc linux-epoll wepoll pcre2-8-static pcre2-posix-static)"
+            ),
+            "            if(TARGET ${_awm_tgt})",
+            "                if(NOT FREEBSD_TARGET_DOS)",
+            (
+                "                    set_target_properties(${_awm_tgt} PROPERTIES "
+                "POSITION_INDEPENDENT_CODE ON)"
+            ),
+            "                endif()",
+            "                target_compile_definitions(${_awm_tgt} PRIVATE",
+            "                    $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS _CRT_RAND_S>",
+            "                )",
+            "            endif()",
+            "        endforeach()",
             '        if(EXISTS "${auto_win_msvc_SOURCE_DIR}/cmake/AutoWinMsvcTransform.cmake")',
             '            include("${auto_win_msvc_SOURCE_DIR}/cmake/AutoWinMsvcTransform.cmake")',
             "        endif()",
@@ -283,10 +303,26 @@ def render_per_binary_cmakelists(
             f'    set(_FBSD_TARGET "fbsd_bin_{safe_id}")',
             "endif()",
             "",
+            "add_executable(${_FBSD_TARGET})",
             (
-                f"add_executable(${{_FBSD_TARGET}} "
+                f"target_sources(${{_FBSD_TARGET}} PRIVATE "
                 f"${{_FBSD_{safe_id.upper()}_ACTIVE_SOURCES}}{hdr_dep_arg})"
             ),
+            'if("c_std_11" IN_LIST CMAKE_C_COMPILE_FEATURES)',
+            "    target_compile_features(${_FBSD_TARGET} PRIVATE c_std_11)",
+            "endif()",
+        ]
+    )
+    if spec.is_cxx:
+        lines.extend(
+            [
+                'if(NOT FREEBSD_TARGET_DOS AND "cxx_std_17" IN_LIST CMAKE_CXX_COMPILE_FEATURES)',
+                "    target_compile_features(${_FBSD_TARGET} PRIVATE cxx_std_17)",
+                "endif()",
+            ]
+        )
+    lines.extend(
+        [
             "set_target_properties(${_FBSD_TARGET} PROPERTIES",
             f'    OUTPUT_NAME "{spec.prog}"',
             '    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"',
@@ -337,6 +373,7 @@ def render_per_binary_cmakelists(
         [
             "    $<$<BOOL:${FREEBSD_TARGET_DOS}>:__DOS__=1>",
             "    $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS>",
+            "    $<$<BOOL:${MSVC}>:_CRT_RAND_S>",
             "    $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_DEPRECATE>",
             "    $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_WARNINGS>",
             "    $<$<BOOL:${MSVC}>:_CRT_STDIO_ISO_WIDE_SPECIFIERS=1>",
@@ -412,33 +449,50 @@ def render_per_binary_cmakelists(
                 "endif()",
             ]
         )
+    msvc_cxx_opt = '"$<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>" ' if spec.is_cxx else ""
+    msvc_c_opt = '"$<$<COMPILE_LANGUAGE:C>:/Zc:__STDC__>" ' if spec.prog == "vacation" else ""
     lines.extend(
         [
             "if(FREEBSD_TARGET_DOS)",
+            '    get_filename_component(_fbsd_ow_cc "${CMAKE_C_COMPILER}" NAME)',
             (
-                "    target_compile_options(${_FBSD_TARGET} PRIVATE "
+                "    if(FREEBSD_DOS_I86 "
+                'OR CMAKE_SYSTEM_PROCESSOR STREQUAL "I86" '
+                "OR CMAKE_SIZEOF_VOID_P EQUAL 2 "
+                'OR _fbsd_ow_cc MATCHES "^wcl(\\\\.exe)?$")'
+            ),
+            (
+                "        target_compile_options(${_FBSD_TARGET} PRIVATE "
+                "-ml -zt=32 -zm -zc -os -d0 "
                 '"$<$<COMPILE_LANGUAGE:C>:-zastd=c99>" '
                 '"$<$<COMPILE_LANGUAGE:C>:-ze>" '
                 '"$<$<COMPILE_LANGUAGE:C>:-aa>" '
                 '"-wcd=201" "-wcd=202")'
             ),
-            '    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "I86" OR CMAKE_SIZEOF_VOID_P EQUAL 2)',
             (
                 "        target_link_options(${_FBSD_TARGET} PRIVATE "
                 '"option" "stack=8192,eliminate")'
             ),
             "    else()",
             (
+                "        target_compile_options(${_FBSD_TARGET} PRIVATE "
+                "-zm -zc -os -d0 "
+                '"$<$<COMPILE_LANGUAGE:C>:-zastd=c99>" '
+                '"$<$<COMPILE_LANGUAGE:C>:-ze>" '
+                '"$<$<COMPILE_LANGUAGE:C>:-aa>" '
+                '"-wcd=201" "-wcd=202")'
+            ),
+            (
                 "        target_link_options(${_FBSD_TARGET} PRIVATE "
                 '"option" "stack=524288,eliminate")'
             ),
             "    endif()",
+            "    unset(_fbsd_ow_cc)",
             "elseif(MSVC)",
             (
                 "    target_compile_options(${_FBSD_TARGET} PRIVATE "
-                '"$<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>" '
-                + ('"$<$<COMPILE_LANGUAGE:C>:/Zc:__STDC__>" ' if spec.prog == "vacation" else "")
-                + '"/wd4005" "/wd4244" "/wd4267" "/wd4716" "/wd4996")'
+                f"{msvc_cxx_opt}{msvc_c_opt}"
+                '"/wd4005" "/wd4244" "/wd4267" "/wd4716" "/wd4996")'
             ),
             '    target_link_options(${_FBSD_TARGET} PRIVATE "/STACK:8388608")',
             "else()",

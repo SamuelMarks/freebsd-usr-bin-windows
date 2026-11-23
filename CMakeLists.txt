@@ -10,37 +10,16 @@
 
 cmake_minimum_required(VERSION 3.24)
 
-if(POLICY CMP0091)
-    cmake_policy(SET CMP0091 NEW)
-    set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
-endif()
-if(POLICY CMP0114)
-    cmake_policy(SET CMP0114 NEW)
-endif()
-if(POLICY CMP0135)
-    cmake_policy(SET CMP0135 NEW)
-endif()
 if(POLICY CMP0141)
     cmake_policy(SET CMP0141 NEW)
-    set(CMAKE_POLICY_DEFAULT_CMP0141 NEW)
 endif()
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
+set(_fbsd_user_had_build_type OFF)
+if(DEFINED CACHE{CMAKE_BUILD_TYPE})
+    set(_fbsd_user_had_build_type ON)
+endif()
 
 project(freebsd_usr_bin_windows VERSION 15.0.0 LANGUAGES C)
-
-if(MSVC AND NOT CMAKE_HOST_WIN32 AND NOT CMAKE_NM)
-    find_program(_FBSD_HOST_NM
-        NAMES llvm-nm x86_64-w64-mingw32-nm nm
-        PATHS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin
-    )
-    if(_FBSD_HOST_NM)
-        set(CMAKE_NM "${_FBSD_HOST_NM}" CACHE FILEPATH "Path to nm for WINDOWS_EXPORT_ALL_SYMBOLS" FORCE)
-    endif()
-endif()
-
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED OFF)
-set(FREEBSD_VERSION "15.0.0" CACHE STRING "Upstream FreeBSD release version")
 
 option(BUILD_TESTING "Enable CTest functional test suite" ON)
 option(FREEBSD_BUILD_INDIVIDUAL "Build standalone per-binary executables via generated per-binary CMakeLists.txt" ON)
@@ -58,6 +37,9 @@ set(FREEBSD_TARGET_DOS OFF)
 set(FREEBSD_DOS_I86 OFF)
 if(WATCOM OR CMAKE_SYSTEM_NAME STREQUAL "DOS" OR CMAKE_C_COMPILER_ID MATCHES "Watcom")
     set(FREEBSD_TARGET_DOS ON)
+    if(NOT _fbsd_user_had_build_type)
+        set(CMAKE_BUILD_TYPE "MinSizeRel" CACHE STRING "Default build type for DOS" FORCE)
+    endif()
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "Disable shared libraries on DOS" FORCE)
     set(FREEBSD_SECTION3_SHARED OFF CACHE BOOL "Static Section 3 libraries on DOS" FORCE)
     get_filename_component(_fbsd_ow_cc_name "${CMAKE_C_COMPILER}" NAME)
@@ -65,24 +47,8 @@ if(WATCOM OR CMAKE_SYSTEM_NAME STREQUAL "DOS" OR CMAKE_C_COMPILER_ID MATCHES "Wa
        OR CMAKE_SIZEOF_VOID_P EQUAL 2
        OR _fbsd_ow_cc_name MATCHES "^wcl(\\.exe)?$")
         set(FREEBSD_DOS_I86 ON)
-        string(REGEX REPLACE "(^| )-m[smchf]( |$)" "\\1-ml\\2" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-        string(REGEX REPLACE "(^| )-zt=[0-9]+( |$)" "\\1\\2" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-        if(NOT CMAKE_C_FLAGS MATCHES "(^| )-ml( |$)")
-            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ml")
-        endif()
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -zm -zc -zt=32 -os -d0")
-    else()
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -zm -zc -os -d0")
-    endif()
-    string(REPLACE "-d2" "-d0" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
-    string(REPLACE "-od" "-os" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
-    string(REPLACE "debug all" "" CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG}")
-    if(NOT CMAKE_EXE_LINKER_FLAGS MATCHES "eliminate")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} option eliminate")
     endif()
     unset(_fbsd_ow_cc_name)
-else()
-    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -116,9 +82,6 @@ set(_saved_build_testing "${BUILD_TESTING}")
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(AUTO_WIN_MSVC_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(AUTO_WIN_MSVC_UNICODE OFF CACHE BOOL "" FORCE)
-if(MSVC)
-    add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_RAND_S)
-endif()
 
 option(FREEBSD_AUTO_WIN_MSVC_PREFER_LOCAL
     "Use sibling ../auto-win-msvc or ./auto-win-msvc checkout when present" ON)
@@ -176,6 +139,17 @@ FetchContent_MakeAvailable(auto_win_msvc)
 
 set(BUILD_TESTING "${_saved_build_testing}" CACHE BOOL "" FORCE)
 
+foreach(_awm_tgt IN ITEMS auto-win-msvc linux-epoll wepoll pcre2-8-static pcre2-posix-static)
+    if(TARGET ${_awm_tgt})
+        if(NOT FREEBSD_TARGET_DOS)
+            set_target_properties(${_awm_tgt} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        endif()
+        target_compile_definitions(${_awm_tgt} PRIVATE
+            $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS _CRT_RAND_S>
+        )
+    endif()
+endforeach()
+
 if(NOT EXISTS "${auto_win_msvc_SOURCE_DIR}/bsd-dev-headers/include/elf.h")
     message(FATAL_ERROR
         "auto-win-msvc at '${auto_win_msvc_SOURCE_DIR}' is outdated "
@@ -227,6 +201,58 @@ freebsd_ensure_bootstrap_tools(
     OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/host_tools"
 )
 
+function(_fbsd_configure_c_target _target)
+    if("c_std_11" IN_LIST CMAKE_C_COMPILE_FEATURES)
+        target_compile_features(${_target} PRIVATE c_std_11)
+    endif()
+    target_include_directories(${_target} BEFORE PRIVATE
+        "${FREEBSD_GEN_INC}"
+        "${AWM_POSIX_INCLUDES}"
+        "${auto_win_msvc_SOURCE_DIR}/include"
+    )
+    target_compile_definitions(${_target} PRIVATE
+        _GNU_SOURCE=1
+        WITHOUT_CAPSICUM=1
+        WITHOUT_CASPER=1
+        $<$<BOOL:${FREEBSD_TARGET_DOS}>:__DOS__=1>
+        $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS _CRT_RAND_S _CRT_NONSTDC_NO_DEPRECATE _CRT_NONSTDC_NO_WARNINGS _CRT_STDIO_ISO_WIDE_SPECIFIERS=1>
+        $<$<BOOL:${WIN32}>:WIN32_LEAN_AND_MEAN NOMINMAX>
+    )
+    set(_awm_cfg "${AWM_POSIX_INCLUDES}/auto-win-msvc-configure.h")
+    set(_pre_cfg "${FREEBSD_GEN_INC}/freebsd_compat_preinclude.h")
+    if(EXISTS "${_awm_cfg}" AND EXISTS "${_pre_cfg}")
+        if(FREEBSD_TARGET_DOS)
+            file(TO_NATIVE_PATH "${_awm_cfg}" _awm_nat)
+            file(TO_NATIVE_PATH "${_pre_cfg}" _pre_nat)
+            target_compile_options(${_target} PRIVATE
+                $<$<BOOL:${FREEBSD_DOS_I86}>:-ml -zt=32>
+                -zm -zc -os -d0
+                "$<$<COMPILE_LANGUAGE:C>:-zastd=c99>"
+                "$<$<COMPILE_LANGUAGE:C>:-ze>"
+                "$<$<COMPILE_LANGUAGE:C>:-aa>"
+                "-fi=${_awm_nat}"
+                "-fi=${_pre_nat}"
+                "-wcd=201"
+                "-wcd=202"
+            )
+        elseif(MSVC)
+            target_compile_options(${_target} PRIVATE
+                "/FI${_awm_cfg}"
+                "/FI${_pre_cfg}"
+                "/wd4005" "/wd4018" "/wd4100" "/wd4127" "/wd4146"
+                "/wd4244" "/wd4267" "/wd4389" "/wd4706" "/wd4716" "/wd4996"
+            )
+        else()
+            target_compile_options(${_target} PRIVATE
+                "SHELL:-include ${_awm_cfg}"
+                "SHELL:-include ${_pre_cfg}"
+                "-Wno-unused-parameter"
+                "-Wno-sign-compare"
+            )
+        endif()
+    endif()
+endfunction()
+
 # Shared static helper target for FreeBSD userland compatibility shims
 set(_LIBCOMPAT_RAW "${FREEBSD_GEN_DIR}/src/freebsd_libcompat.c")
 if(COMMAND auto_win_msvc_transform_sources AND (MSVC OR FREEBSD_TARGET_DOS))
@@ -239,50 +265,12 @@ else()
     set(_LIBCOMPAT_ACTIVE "${_LIBCOMPAT_RAW}")
 endif()
 
-add_library(fbsd_libcompat STATIC ${_LIBCOMPAT_ACTIVE})
-set_target_properties(fbsd_libcompat PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(fbsd_libcompat BEFORE PRIVATE
-    "${FREEBSD_GEN_INC}"
-    "${AWM_POSIX_INCLUDES}"
-    "${auto_win_msvc_SOURCE_DIR}/include"
-)
-target_compile_definitions(fbsd_libcompat PRIVATE
-    _GNU_SOURCE=1
-    WITHOUT_CAPSICUM=1
-    WITHOUT_CASPER=1
-    $<$<BOOL:${FREEBSD_TARGET_DOS}>:__DOS__=1>
-    $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS>
-    $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_DEPRECATE>
-    $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_WARNINGS>
-    $<$<BOOL:${WIN32}>:WIN32_LEAN_AND_MEAN>
-    $<$<BOOL:${WIN32}>:NOMINMAX>
-)
-set(_LC_AWM_CFG "${AWM_POSIX_INCLUDES}/auto-win-msvc-configure.h")
-set(_LC_PREINC "${FREEBSD_GEN_INC}/freebsd_compat_preinclude.h")
-if(EXISTS "${_LC_AWM_CFG}" AND EXISTS "${_LC_PREINC}")
-    if(FREEBSD_TARGET_DOS)
-        file(TO_NATIVE_PATH "${_LC_AWM_CFG}" _LC_AWM_NAT)
-        file(TO_NATIVE_PATH "${_LC_PREINC}" _LC_PRE_NAT)
-        target_compile_options(fbsd_libcompat PRIVATE
-            "$<$<COMPILE_LANGUAGE:C>:-zastd=c99>"
-            "$<$<COMPILE_LANGUAGE:C>:-ze>"
-            "$<$<COMPILE_LANGUAGE:C>:-aa>"
-            "-fi=${_LC_AWM_NAT}"
-            "-fi=${_LC_PRE_NAT}"
-            "-wcd=201"
-            "-wcd=202"
-        )
-    elseif(MSVC)
-        target_compile_options(fbsd_libcompat PRIVATE "/FI${_LC_AWM_CFG}" "/FI${_LC_PREINC}" "/wd4005" "/wd4244" "/wd4267" "/wd4716" "/wd4996")
-    else()
-        target_compile_options(fbsd_libcompat PRIVATE
-            "SHELL:-include ${_LC_AWM_CFG}"
-            "SHELL:-include ${_LC_PREINC}"
-            "-Wno-unused-parameter"
-            "-Wno-sign-compare"
-        )
-    endif()
+add_library(fbsd_libcompat STATIC)
+target_sources(fbsd_libcompat PRIVATE ${_LIBCOMPAT_ACTIVE})
+if(NOT FREEBSD_TARGET_DOS)
+    set_target_properties(fbsd_libcompat PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
+_fbsd_configure_c_target(fbsd_libcompat)
 target_link_libraries(fbsd_libcompat PUBLIC auto-win-msvc)
 
 if(FREEBSD_TARGET_DOS AND (FREEBSD_DOS_I86 OR (BUILD_TESTING AND NOT FREEBSD_DOS_FULL_SUITE)))
@@ -349,69 +337,17 @@ if(_fbsd_build_multicall_active)
         set(FREEBSD_ACTIVE_SOURCES ${FREEBSD_TRANSFORMED_SOURCES})
     endif()
 
-    add_executable(freebsd-usr-bin ${FREEBSD_ACTIVE_SOURCES})
+    add_executable(freebsd-usr-bin)
+    target_sources(freebsd-usr-bin PRIVATE ${FREEBSD_ACTIVE_SOURCES})
     set_target_properties(freebsd-usr-bin PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
-
-    target_include_directories(freebsd-usr-bin BEFORE PRIVATE
-        "${FREEBSD_GEN_INC}"
-        "${AWM_POSIX_INCLUDES}"
-        "${auto_win_msvc_SOURCE_DIR}/include"
-    )
+    _fbsd_configure_c_target(freebsd-usr-bin)
 
     if(FREEBSD_TARGET_DOS)
-        target_compile_definitions(freebsd-usr-bin PRIVATE
-            __DOS__=1
-            _GNU_SOURCE=1
-            WITHOUT_CAPSICUM=1
-            WITHOUT_CASPER=1
-        )
-        set(_awm_cfg "${AWM_POSIX_INCLUDES}/auto-win-msvc-configure.h")
-        set(_fbsd_cfg "${FREEBSD_GEN_INC}/freebsd_compat_preinclude.h")
-        file(TO_NATIVE_PATH "${_awm_cfg}" _awm_cfg_native)
-        file(TO_NATIVE_PATH "${_fbsd_cfg}" _fbsd_cfg_native)
-        target_compile_options(freebsd-usr-bin PRIVATE
-            "$<$<COMPILE_LANGUAGE:C>:-zastd=c99>"
-            "$<$<COMPILE_LANGUAGE:C>:-ze>"
-            "$<$<COMPILE_LANGUAGE:C>:-aa>"
-            "-fi=${_awm_cfg_native}"
-            "-fi=${_fbsd_cfg_native}"
-            "-wcd=201"
-            "-wcd=202"
-        )
-        target_link_options(freebsd-usr-bin PRIVATE "option" "stack=524288")
+        target_link_options(freebsd-usr-bin PRIVATE "option" "stack=524288,eliminate")
     elseif(MSVC)
-        target_compile_definitions(freebsd-usr-bin PRIVATE
-            _CRT_SECURE_NO_WARNINGS
-            _CRT_NONSTDC_NO_DEPRECATE
-            _CRT_NONSTDC_NO_WARNINGS
-            _CRT_STDIO_ISO_WIDE_SPECIFIERS=1
-            WIN32_LEAN_AND_MEAN
-            NOMINMAX
-            _GNU_SOURCE=1
-            WITHOUT_CAPSICUM=1
-            WITHOUT_CASPER=1
-        )
-        target_compile_options(freebsd-usr-bin PRIVATE
-            "/FI${AWM_POSIX_INCLUDES}/auto-win-msvc-configure.h"
-            "/FI${FREEBSD_GEN_INC}/freebsd_compat_preinclude.h"
-            "/wd4005" "/wd4018" "/wd4100" "/wd4127" "/wd4146"
-            "/wd4244" "/wd4267" "/wd4389" "/wd4706" "/wd4716" "/wd4996"
-        )
         target_link_options(freebsd-usr-bin PRIVATE "/STACK:8388608")
-    else()
-        target_compile_definitions(freebsd-usr-bin PRIVATE
-            _GNU_SOURCE=1
-            WITHOUT_CAPSICUM=1
-            WITHOUT_CASPER=1
-        )
-        target_compile_options(freebsd-usr-bin PRIVATE
-            "SHELL:-include ${AWM_POSIX_INCLUDES}/auto-win-msvc-configure.h"
-            "SHELL:-include ${FREEBSD_GEN_INC}/freebsd_compat_preinclude.h"
-            "-Wno-unused-parameter"
-            "-Wno-sign-compare"
-        )
     endif()
 
     target_link_libraries(freebsd-usr-bin PRIVATE
@@ -419,10 +355,8 @@ if(_fbsd_build_multicall_active)
         fbsd_libutil
         fbsd_libxo
         $<$<BOOL:${WIN32}>:bcrypt ws2_32>
+        $<$<BOOL:${UNIX}>:m>
     )
-    if(UNIX)
-        target_link_libraries(freebsd-usr-bin PRIVATE m)
-    endif()
 
     install(TARGETS freebsd-usr-bin RUNTIME DESTINATION bin COMPONENT suite)
 endif()
@@ -449,8 +383,6 @@ include(CPack)
 # -----------------------------------------------------------------------------
 include(CTest)
 if(BUILD_TESTING AND FREEBSD_TARGET_DOS)
-    enable_testing()
-
     if(TARGET fbsd_bin_true)
         add_test(NAME dos_usr_bin_true COMMAND fbsd_bin_true)
     endif()
@@ -545,8 +477,6 @@ if(BUILD_TESTING AND FREEBSD_TARGET_DOS)
         )
     endif()
 elseif(BUILD_TESTING AND NOT FREEBSD_TARGET_DOS)
-    enable_testing()
-
     set(_test_runner_prefix "")
     if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
         find_program(WINE_EXECUTABLE NAMES wine wine64)
@@ -647,8 +577,7 @@ elseif(BUILD_TESTING AND NOT FREEBSD_TARGET_DOS)
             PASS_REGULAR_EXPRESSION "42"
         )
 
-        if(NOT _test_runner_prefix)
-            find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        if(NOT _test_runner_prefix AND Python3_Interpreter_FOUND)
             add_test(
                 NAME freebsd_usr_bin_functional_suite
                 COMMAND "${Python3_EXECUTABLE}" -m scripts.run_freebsd_usr_bin_tests

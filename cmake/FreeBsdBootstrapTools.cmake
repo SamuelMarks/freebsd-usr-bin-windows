@@ -9,11 +9,10 @@ Provides:
   - ``freebsd_detect_host_cc``: Locates a native C compiler executable capable
     of producing runnable binaries on ``CMAKE_HOST_SYSTEM_NAME`` even when
     ``CMAKE_C_COMPILER`` is a cross-compiler (such as ``wcl386`` for DOS).
-  - ``freebsd_ensure_bootstrap_tools``: Compiles host-native ``host_byacc``
-    (``contrib/byacc``), ``host_flex`` (``contrib/flex``), ``host_maketab``
-    (``contrib/one-true-awk/maketab.c``), ``host_mkmagic`` (``contrib/file``),
-    ``host_compile_et`` (``contrib/com_err``), and ``host_strfile``
-    (``usr.bin/fortune/strfile``) inside ``${CMAKE_BINARY_DIR}/host_tools``.
+  - ``freebsd_ensure_bootstrap_tools``: Discovers or compiles host-native
+    ``host_byacc`` (``contrib/byacc``) and system ``flex``/``lex`` inside
+    ``${CMAKE_BINARY_DIR}/host_tools``, and records ``FREEBSD_MAKETAB_SRC``
+    (``contrib/one-true-awk/maketab.c``) for ``awk`` code generation.
   - ``freebsd_compile_yacc_lex``: Processes ``.y`` grammars and ``.l`` scanners
     into ``${FREEBSD_GEN_DIR}/codegen/<target_id>/`` at configure or build time.
 #]=======================================================================]
@@ -116,27 +115,8 @@ function(freebsd_ensure_bootstrap_tools)
         endif()
     endif()
 
-    # Build host_strfile from usr.bin/fortune/strfile when available
-    set(_STRFILE_C "${ARG_FREEBSD_SRC_DIR}/usr.bin/fortune/strfile/strfile.c")
-    set(_HOST_STRFILE_BIN "${ARG_OUT_DIR}/host_strfile${CMAKE_HOST_EXECUTABLE_SUFFIX}")
-    if(_HOST_CC AND NOT CMAKE_HOST_WIN32 AND EXISTS "${_STRFILE_C}" AND NOT EXISTS "${_HOST_STRFILE_BIN}")
-        execute_process(
-            COMMAND "${_HOST_CC}" -O2 "${_STRFILE_C}" -o "${_HOST_STRFILE_BIN}"
-            RESULT_VARIABLE _SF_RC
-            OUTPUT_QUIET ERROR_QUIET
-        )
-        if(_SF_RC EQUAL 0)
-            set(FREEBSD_HOST_STRFILE "${_HOST_STRFILE_BIN}" CACHE FILEPATH "Built host_strfile" FORCE)
-        endif()
-    endif()
-
-    # Record host_maketab, host_mkmagic, and host_compile_et source locations for codegen rules
     set(FREEBSD_MAKETAB_SRC "${ARG_FREEBSD_SRC_DIR}/contrib/one-true-awk/maketab.c"
         CACHE FILEPATH "Upstream awk maketab.c source" FORCE)
-    set(FREEBSD_COMPILE_ET_DIR "${ARG_FREEBSD_SRC_DIR}/contrib/com_err"
-        CACHE PATH "Upstream com_err directory" FORCE)
-    set(FREEBSD_FILE_SRC_DIR "${ARG_FREEBSD_SRC_DIR}/contrib/file/src"
-        CACHE PATH "Upstream libmagic/file source directory" FORCE)
 endfunction()
 
 # -----------------------------------------------------------------------------

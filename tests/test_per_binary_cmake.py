@@ -75,7 +75,12 @@ def test_render_per_binary_cmakelists_variants_and_errors(tmp_path: Path) -> Non
     assert "freebsd_compile_yacc_lex(" in text
     assert 'set(FREEBSD_REQUIRED_SECTION3_LIBS "fbsd_libarchive;fbsd_libelftc")' in text
     assert 'set(FREEBSD_GEN_INC "' in text
-    assert "add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_RAND_S)" in text
+    assert "$<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS _CRT_RAND_S>" in text
+    assert "$<$<BOOL:${MSVC}>:_CRT_RAND_S>" in text
+    assert "target_compile_features(${_FBSD_TARGET} PRIVATE c_std_11)" in text
+    assert "target_compile_features(${_FBSD_TARGET} PRIVATE cxx_std_17)" in text
+    assert "/Zc:__cplusplus" in text
+    assert "add_compile_definitions(" not in text
     assert 'set(BUILD_TESTING OFF CACHE BOOL "" FORCE)' in text
     assert "option(FREEBSD_AUTO_WIN_MSVC_PREFER_LOCAL" in text
     assert (
@@ -134,13 +139,14 @@ def test_render_per_binary_cmakelists_variants_and_errors(tmp_path: Path) -> Non
     l_txt = render_per_binary_cmakelists(lex_only, tmp_path, tmp_path, tmp_path / "gen")
     assert "YACC_SOURCES" in y_txt and "LEX_SOURCES" not in y_txt
     assert "OUT_HEADERS_VAR _FBSD_FIND_CODEGEN_HEADERS" in y_txt
+    assert "add_executable(${_FBSD_TARGET})" in y_txt
     assert (
-        "add_executable(${_FBSD_TARGET} ${_FBSD_FIND_ACTIVE_SOURCES} ${_FBSD_FIND_CODEGEN_HEADERS})"
-        in y_txt
+        "target_sources(${_FBSD_TARGET} PRIVATE "
+        "${_FBSD_FIND_ACTIVE_SOURCES} ${_FBSD_FIND_CODEGEN_HEADERS})" in y_txt
     )
     assert "LEX_SOURCES" in l_txt and "YACC_SOURCES" not in l_txt
-    assert "add_executable(${_FBSD_TARGET} ${_FBSD_COLLDEF_ACTIVE_SOURCES})" in l_txt
-    assert "/Zc:__cplusplus" in y_txt
+    assert "target_sources(${_FBSD_TARGET} PRIVATE ${_FBSD_COLLDEF_ACTIVE_SOURCES})" in l_txt
+    assert "/Zc:__cplusplus" not in y_txt
     assert "/wd4716" in y_txt
     assert "/Zc:__STDC__" not in y_txt
 
@@ -434,3 +440,66 @@ def test_auto_win_msvc_unpinned_tracks_latest_master(tmp_path: Path) -> None:
         env=cmake_poison_env,
     )
     assert r_r3.returncode == 0 and "SYNTH_AWM_REV=r3" in r_r3.stdout
+
+
+def test_repository_cmake_files_forbid_globals(tmp_path: Path) -> None:
+    """Verify repository and generated CMake files avoid global compiler/linker directives.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    sample_c = tmp_path / "sample.c"
+    sample_c.write_text(f"int main(void) {{ return 0; }}{LF}", encoding="utf-8")
+    sample_spec = BinarySpec(
+        prog="sample",
+        subdir="sample",
+        tier=1,
+        is_cxx=True,
+        sources=(str(sample_c),),
+        yacc_sources=(),
+        lex_sources=(),
+        generated_headers=(),
+        include_dirs=(str(tmp_path),),
+        compile_defs=("SAMPLE=1",),
+        raw_libs=(),
+        section3_targets=("fbsd_libutil",),
+        links=(),
+        scripts=(),
+    )
+    generated_cm = generate_per_binary_cmake(sample_spec, repo_root, tmp_path, tmp_path / "gen")
+
+    cmake_files = (
+        repo_root / "CMakeLists.txt",
+        repo_root / "CPackConfig.cmake",
+        repo_root / "CPackSourceConfig.cmake",
+        repo_root / "cmake" / "FreeBsdBootstrapTools.cmake",
+        repo_root / "cmake" / "FreeBsdInternalLibs.cmake",
+        repo_root / "cmake" / "GenerateFreeBsdHeaders.cmake",
+        generated_cm,
+    )
+    forbidden_global_re = re.compile(
+        r"^\s*("
+        r"include_directories|link_directories|link_libraries|"
+        r"add_compile_definitions|add_compile_options|add_definitions|add_link_options"
+        r")\s*\("
+        r"|\b("
+        r"CMAKE_C_STANDARD|CMAKE_CXX_STANDARD|CMAKE_POSITION_INDEPENDENT_CODE|"
+        r"CMAKE_C_FLAGS|CMAKE_CXX_FLAGS|CMAKE_EXE_LINKER_FLAGS|CMAKE_SHARED_LINKER_FLAGS|"
+        r"CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS|CMAKE_POLICY_VERSION_MINIMUM|"
+        r"FREEBSD_HOST_STRFILE|FREEBSD_COMPILE_ET_DIR|FREEBSD_FILE_SRC_DIR"
+        r")\b",
+        re.MULTILINE,
+    )
+    for cm_path in cmake_files:
+        content = cm_path.read_text(encoding="utf-8")
+        assert forbidden_global_re.search(content) is None, f"Global directive in {cm_path}"
+
+    root_text = (repo_root / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "target_sources(" in root_text
+    assert "target_compile_features(" in root_text
+    assert "target_include_directories(" in root_text
+    assert "target_compile_definitions(" in root_text
+    assert "target_compile_options(" in root_text
+    assert "target_link_options(" in root_text
+    assert "target_link_libraries(" in root_text

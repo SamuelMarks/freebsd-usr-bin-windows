@@ -10,9 +10,10 @@ executable from ``usr.bin/printf``).
 Platform linkage model:
   - **Windows (MSVC ``X64``, ``X86``, ``ARM64``) & Unix**: Built as ``SHARED``
     libraries (``.dll`` + ``.lib`` import library + SDK headers) when
-    ``FREEBSD_SECTION3_SHARED=ON``, using ``CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON``
-    plus optional generated ``.def`` files for ``DATA`` exports so zero ``.c``
-    or ``.h`` files in ``../freebsd-src`` are modified.
+    ``FREEBSD_SECTION3_SHARED=ON``, using target property
+    ``WINDOWS_EXPORT_ALL_SYMBOLS ON`` plus optional generated ``.def`` files
+    for ``DATA`` exports so zero ``.c`` or ``.h`` files in ``../freebsd-src``
+    are modified.
   - **32-bit Protected-Mode DOS (OpenWatcom, ``FREEBSD_TARGET_DOS=ON``)**:
     Built as ``STATIC`` libraries (``.lib``) because DOS ``LE`` executables do
     not load Win32 PE DLLs.
@@ -196,15 +197,23 @@ function(freebsd_add_section3_library _TARGET)
         set(_LIB_TYPE STATIC)
     endif()
 
+    set(_S3_RAW_SRCS ${ARG_SOURCES})
+    if(NOT TARGET fbsd_libcompat AND EXISTS "${_FBSD_GEN_BASE}/src/freebsd_libcompat.c")
+        list(APPEND _S3_RAW_SRCS "${_FBSD_GEN_BASE}/src/freebsd_libcompat.c")
+    endif()
+
     if((MSVC OR FREEBSD_TARGET_DOS) AND COMMAND auto_win_msvc_transform_sources)
         auto_win_msvc_transform_sources(
             OUTPUT_DIR "${CMAKE_BINARY_DIR}/transformed_s3_${_TARGET}"
             OUTPUT_VAR _ACTIVE_S3_SRCS
-            SOURCES ${ARG_SOURCES}
+            SOURCES ${_S3_RAW_SRCS}
         )
     else()
-        set(_ACTIVE_S3_SRCS ${ARG_SOURCES})
+        set(_ACTIVE_S3_SRCS ${_S3_RAW_SRCS})
     endif()
+
+    add_library(${_TARGET} ${_LIB_TYPE})
+    target_sources(${_TARGET} PRIVATE ${_ACTIVE_S3_SRCS})
 
     if(MSVC AND _LIB_TYPE STREQUAL "SHARED" AND ARG_DATA_EXPORTS)
         set(_DEF_FILE "${_FBSD_S3_GEN_DIR}/defs/${_TARGET}.def")
@@ -216,21 +225,25 @@ EXPORTS
 ")
         endforeach()
         file(WRITE "${_DEF_FILE}" "${_DEF_CONTENT}")
-        list(APPEND _ACTIVE_S3_SRCS "${_DEF_FILE}")
+        target_sources(${_TARGET} PRIVATE "${_DEF_FILE}")
     endif()
 
-    add_library(${_TARGET} ${_LIB_TYPE} ${_ACTIVE_S3_SRCS})
+    if("c_std_11" IN_LIST CMAKE_C_COMPILE_FEATURES)
+        target_compile_features(${_TARGET} PRIVATE c_std_11)
+    endif()
     if(MINGW AND _LIB_TYPE STREQUAL "SHARED")
         target_link_options(${_TARGET} PRIVATE "-Wl,--export-all-symbols")
     endif()
     set_target_properties(${_TARGET} PROPERTIES
         OUTPUT_NAME "${ARG_OUTPUT_NAME}"
         WINDOWS_EXPORT_ALL_SYMBOLS ON
-        POSITION_INDEPENDENT_CODE ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     )
+    if(NOT FREEBSD_TARGET_DOS)
+        set_target_properties(${_TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
 
     target_include_directories(${_TARGET} BEFORE PUBLIC
         ${ARG_INCLUDES}
@@ -257,12 +270,29 @@ EXPORTS
         ${_GNU_DEF}
         ${ARG_DEFINES}
         $<$<BOOL:${FREEBSD_TARGET_DOS}>:__DOS__=1>
-        $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS>
-        $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_DEPRECATE>
-        $<$<BOOL:${MSVC}>:_CRT_NONSTDC_NO_WARNINGS>
-        $<$<BOOL:${WIN32}>:WIN32_LEAN_AND_MEAN>
-        $<$<BOOL:${WIN32}>:NOMINMAX>
+        $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS _CRT_RAND_S _CRT_NONSTDC_NO_DEPRECATE _CRT_NONSTDC_NO_WARNINGS>
+        $<$<BOOL:${WIN32}>:WIN32_LEAN_AND_MEAN NOMINMAX>
     )
+
+    if(FREEBSD_TARGET_DOS)
+        set(_S3_DOS_I86 OFF)
+        get_filename_component(_fbsd_s3_ow_cc "${CMAKE_C_COMPILER}" NAME)
+        if(FREEBSD_DOS_I86
+           OR CMAKE_SYSTEM_PROCESSOR STREQUAL "I86"
+           OR CMAKE_SIZEOF_VOID_P EQUAL 2
+           OR _fbsd_s3_ow_cc MATCHES "^wcl(\\.exe)?$")
+            set(_S3_DOS_I86 ON)
+        endif()
+        target_compile_options(${_TARGET} PRIVATE
+            $<$<BOOL:${_S3_DOS_I86}>:-ml -zt=32>
+            -zm -zc -os -d0
+            "$<$<COMPILE_LANGUAGE:C>:-zastd=c99>"
+            "$<$<COMPILE_LANGUAGE:C>:-ze>"
+            "$<$<COMPILE_LANGUAGE:C>:-aa>"
+            "-wcd=201"
+            "-wcd=202"
+        )
+    endif()
 
     set(_S3_AWM_CFG "${CMAKE_BINARY_DIR}/posix_includes/auto-win-msvc-configure.h")
     set(_S3_PREINC "${_FBSD_GEN_BASE}/include/freebsd_compat_preinclude.h")
@@ -271,13 +301,8 @@ EXPORTS
             file(TO_NATIVE_PATH "${_S3_AWM_CFG}" _S3_AWM_NAT)
             file(TO_NATIVE_PATH "${_S3_PREINC}" _S3_PRE_NAT)
             target_compile_options(${_TARGET} PRIVATE
-                "$<$<COMPILE_LANGUAGE:C>:-zastd=c99>"
-                "$<$<COMPILE_LANGUAGE:C>:-ze>"
-                "$<$<COMPILE_LANGUAGE:C>:-aa>"
                 "-fi=${_S3_AWM_NAT}"
                 "-fi=${_S3_PRE_NAT}"
-                "-wcd=201"
-                "-wcd=202"
             )
         elseif(MSVC)
             target_compile_options(${_TARGET} PRIVATE "/FI${_S3_AWM_CFG}" "/FI${_S3_PREINC}" "/wd4005" "/wd4244" "/wd4267" "/wd4716" "/wd4996")
@@ -293,14 +318,8 @@ EXPORTS
         endif()
     endif()
 
-    set_target_properties(${_TARGET} PROPERTIES
-        C_STANDARD 11
-        C_STANDARD_REQUIRED OFF
-    )
     if(TARGET fbsd_libcompat)
         target_link_libraries(${_TARGET} PRIVATE fbsd_libcompat)
-    elseif(EXISTS "${_FBSD_GEN_BASE}/src/freebsd_libcompat.c")
-        target_sources(${_TARGET} PRIVATE "${_FBSD_GEN_BASE}/src/freebsd_libcompat.c")
     endif()
     if(TARGET auto-win-msvc)
         target_link_libraries(${_TARGET} PUBLIC auto-win-msvc)
